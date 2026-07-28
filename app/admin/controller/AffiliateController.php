@@ -599,7 +599,7 @@ class AffiliateController extends GetUserController
 	public function productaffiPage()
 	{
 		$pid = $this->request->pid;
-		$rows = \think\Db::name("affiliates_product_setting")->where("pid", $pid)->find();
+		$rows = \think\Db::name("affiliates_products_setting")->where("pid", $pid)->find();
 		return jsonrule(["status" => 200, "msg" => lang("SUCCESS MESSAGE"), "data" => $rows]);
 	}
 	/**
@@ -637,7 +637,7 @@ class AffiliateController extends GetUserController
 				$data["affiliate_renew"] = isset($param["affiliate_renew"]) ? intval($param["affiliate_renew"]) : 0;
 				$data["affiliate_renew_type"] = isset($param["affiliate_renew_type"]) ? intval($param["affiliate_renew_type"]) : 0;
 				$data["create_time"] = time();
-				$res = \think\Db::name("affiliates_product_setting")->insertGetId($data);
+				$res = \think\Db::name("affiliates_products_setting")->insertGetId($data);
 				active_log_final(sprintf($this->lang["Aff_admin_productaffiAdd"], $res));
 			} else {
 				$param = $this->request->param();
@@ -657,7 +657,7 @@ class AffiliateController extends GetUserController
 					$data["affiliate_renew_type"] = isset($param["affiliate_renew_type"]) ? intval($param["affiliate_renew_type"]) : 0;
 				}
 				$desc = "";
-				$spg = \think\Db::name("affiliates_product_setting")->where("pid", $param["pid"])->find();
+				$spg = \think\Db::name("affiliates_products_setting")->where("pid", $param["pid"])->find();
 				if ($data["affiliate_enabled"] == 1 && $spg["affiliate_bates"] != $param["affiliate_bates"]) {
 					$desc .= " 产品推介计划比例" . $spg["affiliate_bates"] . "改为" . $param["affiliate_bates"];
 				}
@@ -701,7 +701,7 @@ class AffiliateController extends GetUserController
 						$desc .= "产品推介计划由“开启”改为“关闭”";
 					}
 				}
-				\think\Db::name("affiliates_product_setting")->where("id", $param["id"])->update($data);
+				\think\Db::name("affiliates_products_setting")->where("id", $param["id"])->update($data);
 				if (empty($desc)) {
 					$desc .= "未做任何修改";
 				}

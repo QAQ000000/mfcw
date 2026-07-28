@@ -431,10 +431,18 @@ class ViewModel extends \think\Model
 				return is_string($v) ? htmlspecialchars_decode($v, ENT_QUOTES) : $v;
 			}, $product);
 		}
+		$product_pricing = [];
+		$product_ids = array_column($filterproducts ?? [], "id");
+		if (!empty($product_ids)) {
+			$pricing_rows = \think\Db::name("pricing")->where("type", "product")->whereIn("relid", $product_ids)->where("currency", $currencyid)->select()->toArray();
+			foreach ($pricing_rows as $pricing_row) {
+				$product_pricing[$pricing_row["relid"]] = $pricing_row;
+			}
+		}
 		foreach ($filterproducts as $key => $v) {
 			if (!empty($v)) {
 				$paytype = (array) json_decode($v["pay_type"]);
-				$pricing = \think\Db::name("pricing")->where("type", "product")->where("relid", $v["id"])->where("currency", $currencyid)->find();
+				$pricing = $product_pricing[$v["id"]] ?? [];
 				if (!empty($paytype["pay_ontrial_status"])) {
 					if ($pricing["ontrial"] >= 0) {
 						$v["product_price"] = $pricing["ontrial"];

@@ -2,6 +2,8 @@
 
 namespace app\home\controller;
 
+use app\common\logic\ClientActivityLog;
+
 /**
  * @title 前台日志（所有日志接口）
  * @description 接口说明:包括所有前台的日志列表,展示给客户看的日志！
@@ -41,15 +43,19 @@ class RecordLogController extends CommonController
 		$fun = function (\think\db\Query $query) use($uid, $param) {
 			$query->where("uid", $uid);
 			$query->where("type", "neq", 1);
-			$query->where("usertype", "Client");
-			$query->whereOr("usertype", "Sub-Account");
+			$query->where(function (\think\db\Query $query) {
+				$query->where("usertype", "Client")->whereOr("usertype", "Sub-Account");
+			});
 			if (!empty($param["search_time"])) {
 				$start_time = strtotime(date("Y-m-d", $param["search_time"]));
 				$end_time = strtotime("+1 days", $start_time);
 				$query->whereBetweenTime("create_time", $start_time, $end_time);
 			}
 		};
-		$logs = \think\Db::name("activity_log")->field("create_time,id,ipaddr,description,uid,user,port")->where($fun)->where(function (\think\db\Query $query) use($param) {
+		$visibility = function (\think\db\Query $query) {
+			ClientActivityLog::applyVisibilityFilter($query);
+		};
+		$logs = \think\Db::name("activity_log")->field("create_time,id,ipaddr,description,uid,user,port")->where($fun)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
 				$query->whereOr("description", "like", "%{$search_desc}%");
@@ -121,7 +127,7 @@ class RecordLogController extends CommonController
 				return $value .= ":" . $data["port"];
 			}
 		})->order("{$orderby} {$sorting}")->order("create_time", "DESC")->page($page)->limit($limit)->select()->toArray();
-		$count = \think\Db::name("activity_log")->where($fun)->where(function (\think\db\Query $query) use($param) {
+		$count = \think\Db::name("activity_log")->where($fun)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
 				$query->whereOr("description", "like", "%{$search_desc}%");
@@ -164,12 +170,16 @@ class RecordLogController extends CommonController
 		$fun = function (\think\db\Query $query) use($uid, $param) {
 			$query->where("uid", $uid);
 			$query->where("activeid", $uid);
-			$query->where("usertype", "Client");
+			$query->where(function (\think\db\Query $query) {
+				$query->where("usertype", "Client")->whereOr("usertype", "Sub-Account");
+			});
 			$query->where("type", 2);
 			$query->where("type_data_id", $param["id"]);
-			$query->whereOr("usertype", "Sub-Account");
 		};
-		$logs = \think\Db::name("activity_log")->field("create_time,id,ipaddr,description,uid,user,port")->where($fun)->where(function (\think\db\Query $query) use($param) {
+		$visibility = function (\think\db\Query $query) {
+			ClientActivityLog::applyVisibilityFilter($query);
+		};
+		$logs = \think\Db::name("activity_log")->field("create_time,id,ipaddr,description,uid,user,port")->where($fun)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
 				$query->whereOr("description", "like", "%{$search_desc}%");
@@ -223,7 +233,7 @@ class RecordLogController extends CommonController
 				return $value .= ":" . $data["port"];
 			}
 		})->order("{$orderby} {$sorting}")->order("id", "DESC")->page($page)->limit($limit)->select()->toArray();
-		$count = \think\Db::name("activity_log")->where($fun)->where(function (\think\db\Query $query) use($param) {
+		$count = \think\Db::name("activity_log")->where($fun)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
 				$query->whereOr("description", "like", "%{$search_desc}%");

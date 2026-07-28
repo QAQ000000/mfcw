@@ -921,11 +921,6 @@ function configuration($config, $default = [])
 			$re[$v["setting"]] = $v["value"];
 		}
 		return $re;
-		$res = [];
-		foreach ($config as $kk => $vv) {
-			$res[$vv] = is_null($re[$vv]) ? "" : (!is_null($default[$kk]) ? $default[$kk] : "");
-		}
-		return $res;
 	} else {
 		$result = \think\Db::name("configuration")->field("value")->whereRaw("setting = :setting", ["setting" => $config])->find();
 		$re = $result["value"] ?? null;
@@ -953,6 +948,11 @@ function updateConfiguration($setting, $value)
 		$data["setting"] = $setting;
 		\think\Db::name("configuration")->insertGetId($data);
 	}
+	return true;
+}
+function clearCartIndexResponseCache()
+{
+	cache("cart_catalog_snapshot_version", str_replace(".", "", sprintf("%.6f", microtime(true))));
 	return true;
 }
 function getEmailTemplateByType($type)
@@ -3574,7 +3574,7 @@ function getProductCount($oid, $type, $uid, $create_time)
 		foreach ($hosts as $key => $val) {
 			$affiliates = \think\Db::name("affiliates_products_setting")->where("pid", $val["id"])->find();
 			if ($affiliates["affiliate_enabled"] == 1) {
-				if ($affiliates("affiliate_is_renew") != 1) {
+				if ($affiliates["affiliate_is_renew"] != 1) {
 					return false;
 					break;
 				}
@@ -3955,13 +3955,13 @@ function getCommissioninvoicebyhost($hosts, $aff_type, $ladder, $bates)
 			if ($hosts["type"] != "discount" && $hosts["type"] != "setup" && $hosts["type"] != "promo") {
 				$hosts["commission"] = round(bcadd($bates, bcmul($ladder["turnover"]["bates"] / 100, $hosts["amount"], 4), 4), 2);
 			} else {
-				$hosts["commission"] == 0.0;
+					$hosts["commission"] = 0.0;
 			}
 		} else {
 			if ($hosts["type"] != "discount" && $hosts["type"] != "setup" && $hosts["type"] != "promo") {
 				$hosts["commission"] = $bates;
 			} else {
-				$hosts["commission"] == 0.0;
+					$hosts["commission"] = 0.0;
 			}
 		}
 		$hosts["commission_bates"] = $bates;
@@ -4113,7 +4113,7 @@ function dealCommissionaff($rows, $ladder, $uid)
 				$credit = \think\Db::name("credit")->field("id,amount")->where("relid", $value["invoiceid"])->where("description", "like", "%Removed%")->where("aff_refund", "=", 0)->select()->toArray();
 				$refund2 = $refund1 = $refund = $amount_out = $amount_out1 = 0;
 				if (!empty($amount_outs[0]) || !empty($credit[0])) {
-					foreach ($amount_outs as $k => $v) {
+					foreach ($amount_outs as $refundKey => $v) {
 						$amount_out = bcadd($v["amount_out"], $amount_out, 2);
 						if ($rows[$k]["aff_commmission_bates_type"] == 1) {
 							$re = sprintf("%.2f", $v["amount_out"]);
@@ -4125,7 +4125,7 @@ function dealCommissionaff($rows, $ladder, $uid)
 							\think\Db::name("accounts")->where("id", $v["id"])->update(["aff_refund" => 1]);
 						}
 					}
-					foreach ($credit as $k => $v) {
+					foreach ($credit as $creditKey => $v) {
 						$amount_out1 = bcadd($v["amount"], $amount_out1, 2);
 						if ($rows[$k]["aff_commmission_bates_type"] == 1) {
 							$re = sprintf("%.2f", $v["amount"]);
@@ -4286,7 +4286,7 @@ function dealCommissionaffs($rows, $ladder, $id)
 							$rows[$k]["commission_bates"] = $affiliates["affiliate_bates"];
 							$rows[$k]["commission_bates_type"] = 2;
 						}
-						$rows[$k]["child"] = getcommissioninvoice($value["invoiceid"], "host,setup,promo,discount", $affiliates["affiliate_renew_type"], $ladder, $affiliates["affiliate_renew"]);
+						$rows[$k]["child"] = getcommissioninvoice($value["invoiceid"], "host,setup,promo,discount", $affiliates["affiliate_type"], $ladder, $affiliates["affiliate_bates"]);
 					} else {
 						$commission = getproductcommissioninvoice($value["id"], $value["type"], $value["uid"], $value["create_time"], $ladder, $value["invoiceid"]);
 						if ($commission === false) {
@@ -4307,7 +4307,7 @@ function dealCommissionaffs($rows, $ladder, $id)
 				$credit = \think\Db::name("credit")->field("id,amount")->where("relid", $value["invoiceid"])->where("description", "like", "%Removed%")->where("aff_refund", "=", 0)->select()->toArray();
 				$refund2 = $refund1 = $refund = $amount_out = $amount_out1 = 0;
 				if (!empty($amount_outs[0]) || !empty($credit[0])) {
-					foreach ($amount_outs as $k => $v) {
+					foreach ($amount_outs as $refundKey => $v) {
 						$amount_out = bcadd($v["amount_out"], $amount_out, 2);
 						if ($rows[$k]["aff_commmission_bates_type"] == 1) {
 							$re = sprintf("%.2f", $v["amount_out"]);
@@ -4319,7 +4319,7 @@ function dealCommissionaffs($rows, $ladder, $id)
 							\think\Db::name("accounts")->where("id", $v["id"])->update(["aff_refund" => 1]);
 						}
 					}
-					foreach ($credit as $k => $v) {
+					foreach ($credit as $creditKey => $v) {
 						$amount_out1 = bcadd($v["amount"], $amount_out1, 2);
 						if ($rows[$k]["aff_commmission_bates_type"] == 1) {
 							$re = sprintf("%.2f", $v["amount"]);
@@ -4335,7 +4335,7 @@ function dealCommissionaffs($rows, $ladder, $id)
 				$refo = bcadd($refund1, -$refund2, 2);
 				if ($refo > 0) {
 					if ($rows[$k]["is_aff"] == 1) {
-						$affi = \think\Db::name("affiliates")->where("uid", $value["uid"])->find();
+						$affi = \think\Db::name("affiliates")->where("uid", $id)->find();
 						$affcomm = bcsub($rows[$k]["aff_commission"], $refo, 2) > 0 ? bcsub($rows[$k]["aff_commission"], $refo, 2) : 0.0;
 						if ($rows[$k]["aff_commission"] < $refo) {
 							$refo = $rows[$k]["aff_commission"];
@@ -4673,8 +4673,18 @@ function randStrToPass($length = 8, $type = 0)
 }
 function getSaleProductUser($pid, $uid)
 {
-	$tmp = \think\Db::name("user_product_bates")->alias("a")->field("a.type,a.bates")->leftJoin("user_products b", "a.products = b.gid")->leftJoin("clients c", "a.user = c.groupid")->where("c.id", $uid)->where("b.pid", $pid)->find();
-	return $tmp ?: false;
+	static $discounts_by_user = [];
+	$user_key = (string) $uid;
+	if (!array_key_exists($user_key, $discounts_by_user)) {
+		$discounts_by_user[$user_key] = [];
+		$rows = \think\Db::name("user_product_bates")->alias("a")->field("b.pid,a.type,a.bates")->leftJoin("user_products b", "a.products = b.gid")->leftJoin("clients c", "a.user = c.groupid")->where("c.id", $uid)->select()->toArray();
+		foreach ($rows as $row) {
+			if (!isset($discounts_by_user[$user_key][$row["pid"]])) {
+				$discounts_by_user[$user_key][$row["pid"]] = ["type" => $row["type"], "bates" => $row["bates"]];
+			}
+		}
+	}
+	return $discounts_by_user[$user_key][$pid] ?? false;
 }
 /**
  * 引用获取省/市/区(性能高,占用内存空间小)

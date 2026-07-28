@@ -266,7 +266,7 @@ class Host
 		} else {
 			hook("after_module_create_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 			if (!empty($host["server_group"])) {
-				active_log_final(sprintf("模块命令:开通host - User ID:%d - Host ID:%d - 失败 - 原因：%s", $host["uid"], $id, $module_res["msg"]), $host["uid"], 2, $id);
+				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:开通host - User ID:%d - Host ID:%d - 失败 - 原因：%s", $host["uid"], $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			}
 			pushHostInfo($id, "domainstatus", "create");
 			$result["status"] = 406;
@@ -383,7 +383,7 @@ class Host
 			$result["msg"] = $module_res["msg"] ?: lang("MODULE_SUSPEND_SUCCESS");
 		} else {
 			hook("after_module_suspend_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
-			active_log_final(sprintf("模块命令:暂停host - User ID:%d - Host ID:%s - 失败：%s", $host["uid"], $id, $module_res["msg"] . "-" . $reason), $host["uid"], 2, $id);
+			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:暂停host - User ID:%d - Host ID:%s - 失败：%s", $host["uid"], $id, $module_res["msg"] . "-" . $reason), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
 			$result["msg"] = $module_res["msg"];
 		}
@@ -492,7 +492,7 @@ class Host
 			}
 		} else {
 			hook("after_module_unsuspend_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
-			active_log_final(sprintf("模块命令:解除暂停失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["uid"], 2, $id);
+			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:解除暂停失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
 			$result["msg"] = $module_res["msg"];
 		}
@@ -592,9 +592,9 @@ class Host
 		} else {
 			hook("after_module_terminate_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 			if ($cron == "cron") {
-				active_log_final(sprintf("删除失败#User ID:%d - Host ID:%d - 原因:%s", $host["uid"], $id, $module_res["msg"]), $host["uid"], 2, $id);
+					active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("删除失败#User ID:%d - Host ID:%d - 原因:%s", $host["uid"], $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			} else {
-				active_log_final(sprintf("模块命令:删除失败#User ID:%d - Host ID:%d - 原因:%s", $host["uid"], $id, $module_res["msg"]), $host["uid"], 2, $id);
+				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:删除失败#User ID:%d - Host ID:%d - 原因:%s", $host["uid"], $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			}
 			$result["status"] = 406;
 			$result["msg"] = $module_res["msg"];
@@ -705,7 +705,7 @@ class Host
 			pushHostInfo($id);
 		} else {
 			hook("after_module_sync_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
-			active_log_final(sprintf("模块命令:同步失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["uid"], 2, $id);
+			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:同步失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
 			$result["msg"] = $module_res["msg"];
 		}
@@ -788,7 +788,7 @@ class Host
 				$result["msg"] = $module_res["msg"] ?: "开机成功";
 			} else {
 				hook("after_module_on_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
-				active_log_final(sprintf("模块命令:开机失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["uid"], 2, $id);
+				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:开机失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 				$result["status"] = 406;
 				$result["msg"] = $module_res["msg"];
 			}
@@ -872,7 +872,7 @@ class Host
 				$result["msg"] = $module_res["msg"] ?: "关机成功";
 			} else {
 				hook("after_module_off_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
-				active_log_final(sprintf("模块命令:关机失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["uid"], 2, $id);
+				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:关机失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 				$result["status"] = 406;
 				$result["msg"] = $module_res["msg"];
 			}
@@ -956,7 +956,7 @@ class Host
 				$result["msg"] = $module_res["msg"] ?: "重启成功";
 			} else {
 				hook("after_module_reboot_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
-				active_log_final(sprintf("模块命令:重启失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["uid"], 2, $id);
+				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:重启失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 				$result["status"] = 406;
 				$result["msg"] = $module_res["msg"];
 			}
@@ -1036,7 +1036,7 @@ class Host
 				$result["msg"] = $module_res["msg"] ?: "硬关机成功";
 			} else {
 				hook("after_module_hard_off_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
-				active_log_final(sprintf("模块命令:硬关机失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["uid"], 2, $id);
+				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:硬关机失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 				$result["status"] = 406;
 				$result["msg"] = $module_res["msg"];
 			}
@@ -1116,7 +1116,7 @@ class Host
 				$result["msg"] = $module_res["msg"] ?: "硬重启成功";
 			} else {
 				hook("after_module_hard_reboot_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
-				active_log_final(sprintf("模块命令:硬重启失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["uid"], 2, $id);
+				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:硬重启失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 				$result["status"] = 406;
 				$result["msg"] = $module_res["msg"];
 			}
@@ -1196,7 +1196,7 @@ class Host
 				}
 			}
 		} else {
-			active_log_final(sprintf("模块命令:vnc启动失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["uid"], 2, $id);
+			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:vnc启动失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
 			$result["msg"] = $module_res["msg"];
 		}
@@ -1326,7 +1326,7 @@ class Host
 			$result["msg"] = $module_res["msg"] ?: "重装系统发起成功";
 		} else {
 			hook("after_module_reinstall_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
-			active_log_final(sprintf("模块命令:重装系统发起失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["uid"], 2, $id);
+			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:重装系统发起失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
 			$result["msg"] = $module_res["msg"];
 			if (isset($module_res["price"])) {
@@ -1726,7 +1726,7 @@ class Host
 			$result["msg"] = $module_res["msg"] ?: "重置密码成功";
 		} else {
 			hook("after_module_crack_password_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
-			active_log_final(sprintf("模块命令:重置密码失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["uid"], 2, $id);
+			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:重置密码失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
 			$result["msg"] = $module_res["msg"];
 		}
@@ -2013,7 +2013,7 @@ class Host
 			$result["msg"] = $module_res["msg"] ?: "救援系统发起成功";
 		} else {
 			hook("after_module_rescue_system_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
-			active_log_final(sprintf("模块命令:救援系统发起失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["uid"], 2, $id);
+			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:救援系统发起失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
 			$result["msg"] = $module_res["msg"];
 		}

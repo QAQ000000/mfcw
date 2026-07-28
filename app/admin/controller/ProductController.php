@@ -784,59 +784,64 @@ class ProductController extends AdminBaseController
 				\think\Db::name("product_config_links")->insertAll($links);
 			}
 			$groups = \think\Db::name("product_config_links")->alias("a")->field("b.id,b.name,b.description,b.upstream_id")->leftJoin("product_config_groups b", "a.gid = b.id")->where("a.pid", $existingproduct)->where("b.global", 0)->order("a.id", "asc")->select()->toArray();
+			$lingAgeArr = [];
+			$map_link = [];
 			foreach ($groups as $group) {
 				$new_gid = \think\Db::name("product_config_groups")->insertGetId(["name" => $newproductname . "配置项组", "description" => $group["description"] ?? "配置项组描述", "upstream_id" => $group["upstream_id"] ?? 0]);
 				\think\Db::name("product_config_links")->insertGetId(["gid" => $new_gid, "pid" => $newpid]);
-				break;
-			}
-			$options = \think\Db::name("product_config_options")->whereIn("gid", array_column($groups, "id"))->select()->toArray();
-			$lingAgeArr = [];
-			$map_link = [];
-			foreach ($options as $ov) {
-				$oid = $ov["id"];
-				unset($ov["id"]);
-				$ov["gid"] = $new_gid;
-				$ov["copy_id"] = $oid;
-				$new_oid = \think\Db::name("product_config_options")->insertGetId($ov);
-				$lingAgeArr[] = $new_oid;
-				$sub_options = \think\Db::name("product_config_options_sub")->where("config_id", $oid)->select()->toArray();
-				$map = [];
-				foreach ($sub_options as $sv) {
-					$sub_id = $sv["id"];
-					unset($sv["id"]);
-					$sv["config_id"] = $new_oid;
-					$sv["copy_id"] = $sub_id;
-					$new_sub_id = \think\Db::name("product_config_options_sub")->insertGetId($sv);
-					$map[$sub_id] = $new_sub_id;
-					$pricings = \think\Db::name("pricing")->where("type", "configoptions")->where("relid", $sub_id)->select()->toArray();
-					$new_pricings = [];
-					foreach ($pricings as $pv) {
-						unset($pv["id"]);
-						$pv["relid"] = $new_sub_id;
-						$new_pricings[] = $pv;
+				$options = \think\Db::name("product_config_options")->where("gid", $group["id"])->select()->toArray();
+				foreach ($options as $ov) {
+					$oid = $ov["id"];
+					unset($ov["id"]);
+					$ov["gid"] = $new_gid;
+					$ov["copy_id"] = $oid;
+					$new_oid = \think\Db::name("product_config_options")->insertGetId($ov);
+					$lingAgeArr[] = $new_oid;
+					$sub_options = \think\Db::name("product_config_options_sub")->where("config_id", $oid)->select()->toArray();
+					$map = [];
+					foreach ($sub_options as $sv) {
+						$sub_id = $sv["id"];
+						unset($sv["id"]);
+						$sv["config_id"] = $new_oid;
+						$sv["copy_id"] = $sub_id;
+						$new_sub_id = \think\Db::name("product_config_options_sub")->insertGetId($sv);
+						$map[$sub_id] = $new_sub_id;
+						$pricings = \think\Db::name("pricing")->where("type", "configoptions")->where("relid", $sub_id)->select()->toArray();
+						$new_pricings = [];
+						foreach ($pricings as $pv) {
+							unset($pv["id"]);
+							$pv["relid"] = $new_sub_id;
+							$new_pricings[] = $pv;
+						}
+						if (!empty($new_pricings)) {
+							\think\Db::name("pricing")->insertAll($new_pricings);
+						}
 					}
-					\think\Db::name("pricing")->insertAll($new_pricings);
-				}
-				$advance_links = \think\Db::name("product_config_options_links")->where("config_id", $oid)->order("id", "asc")->select()->toArray();
-				foreach ($advance_links as $advance_link) {
-					$advance_sub_ids = json_decode($advance_link["sub_id"], true);
-					$new_advance_sub_ids = [];
-					foreach ($advance_sub_ids as $k => $advance_sub_id) {
-						$new_advance_sub_ids[$map[$k]] = $advance_sub_id;
+					$advance_links = \think\Db::name("product_config_options_links")->where("config_id", $oid)->order("id", "asc")->select()->toArray();
+					foreach ($advance_links as $advance_link) {
+						$advance_sub_ids = json_decode($advance_link["sub_id"], true);
+						$new_advance_sub_ids = [];
+						if (is_array($advance_sub_ids)) {
+							foreach ($advance_sub_ids as $k => $advance_sub_id) {
+								if (isset($map[$k])) {
+									$new_advance_sub_ids[$map[$k]] = $advance_sub_id;
+								}
+							}
+						}
+						$link_id = \think\Db::name("product_config_options_links")->insertGetId(["config_id" => $new_oid, "sub_id" => json_encode($new_advance_sub_ids), "relation" => $advance_link["relation"], "type" => $advance_link["type"], "relation_id" => 0, "upstream_id" => 0]);
+						$map_link[$advance_link["id"]] = $link_id;
 					}
-					$link_id = \think\Db::name("product_config_options_links")->insertGetId(["config_id" => $new_oid, "sub_id" => json_encode($new_advance_sub_ids), "relation" => $advance_link["relation"], "type" => $advance_link["type"], "relation_id" => 0, "upstream_id" => 0]);
-					$map_link[$advance_link["id"]] = $link_id;
 				}
 			}
-			foreach ($map_link as $k1 => $v1) {
-				$tmp = \think\Db::name("product_config_options_links")->where("id", $k1)->find();
-				if ($tmp["type"] == "result") {
-					$old_relation_id = $tmp["relation_id"];
-					$new_relation_id = $map_link[$old_relation_id];
-					\think\Db::name("product_config_options_links")->where("id", $v1)->where("type", "result")->update(["relation_id" => $new_relation_id]);
+			foreach ($map_link as $old_link_id => $new_link_id) {
+				$old_link = \think\Db::name("product_config_options_links")->where("id", $old_link_id)->find();
+				if ($old_link["type"] == "result" && isset($map_link[$old_link["relation_id"]])) {
+					\think\Db::name("product_config_options_links")->where("id", $new_link_id)->where("type", "result")->update(["relation_id" => $map_link[$old_link["relation_id"]]]);
 				}
 			}
-			(new \app\common\model\ProductModel())->setLinkAge("copy")->handleLingAge($lingAgeArr);
+			if (!empty($lingAgeArr)) {
+				(new \app\common\model\ProductModel())->setLinkAge("copy")->handleLingAge($lingAgeArr);
+			}
 			$pricing = \think\Db::name("pricing")->field("id,relid", true)->where("relid", $existingproduct)->where("type", "product")->select()->toArray();
 			if (!empty($pricing)) {
 				foreach ($pricing as $key => $value) {
@@ -869,7 +874,7 @@ class ProductController extends AdminBaseController
 			}
 			active_log(sprintf($this->lang["Product_admin_duplicate"], $existingproduct, $newproductname));
 			\think\Db::commit();
-		} catch (\Exception $e) {
+		} catch (\Throwable $e) {
 			\think\Db::rollback();
 			return jsonrule(["status" => 406, "msg" => lang("DUPLICATE FAIL") . $e->getMessage()]);
 		}

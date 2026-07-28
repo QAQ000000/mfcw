@@ -2,6 +2,8 @@
 
 namespace app\openapi\controller;
 
+use app\common\logic\ClientActivityLog;
+
 /**
  * @title 产品管理
  * @description 接口说明
@@ -230,19 +232,23 @@ class HostController extends \cmf\controller\HomeBaseController
 		$fun = function (\think\db\Query $query) use($uid, $id) {
 			$query->where("uid", $uid);
 			$query->where("activeid", $uid);
-			$query->where("usertype", "Client");
+			$query->where(function (\think\db\Query $query) {
+				$query->where("usertype", "Client")->whereOr("usertype", "Sub-Account");
+			});
 			$query->where("type", 2);
 			$query->where("type_data_id", $id);
-			$query->whereOr("usertype", "Sub-Account");
 		};
-		$logs = \think\Db::name("activity_log")->field("create_time,id,ipaddr,description,uid,user,port")->where($fun)->where(function (\think\db\Query $query) use($param) {
+		$visibility = function (\think\db\Query $query) {
+			ClientActivityLog::applyVisibilityFilter($query);
+		};
+		$logs = \think\Db::name("activity_log")->field("create_time,id,ipaddr,description,uid,user,port")->where($fun)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
 				$query->whereOr("description", "like", "%{$search_desc}%");
 				$query->whereOr("ipaddr", "like", "%{$search_desc}%");
 			}
 		})->order("{$orderby} {$sorting}")->order("id", "DESC")->page($page)->limit($limit)->select()->toArray();
-		$count = \think\Db::name("activity_log")->where($fun)->where(function (\think\db\Query $query) use($param) {
+		$count = \think\Db::name("activity_log")->where($fun)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
 				$query->whereOr("description", "like", "%{$search_desc}%");

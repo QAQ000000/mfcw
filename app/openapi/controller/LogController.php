@@ -2,6 +2,8 @@
 
 namespace app\openapi\controller;
 
+use app\common\logic\ClientActivityLog;
+
 /**
  * @title 日志
  * @description 接口说明
@@ -22,15 +24,19 @@ class LogController extends \cmf\controller\HomeBaseController
 		$fun = function (\think\db\Query $query) use($uid, $param) {
 			$query->where("uid", $uid);
 			$query->where("type", "neq", 1);
-			$query->where("usertype", "Client");
-			$query->whereOr("usertype", "Sub-Account");
+			$query->where(function (\think\db\Query $query) {
+				$query->where("usertype", "Client")->whereOr("usertype", "Sub-Account");
+			});
 			if (!empty($param["search_time"])) {
 				$start_time = strtotime(date("Y-m-d", $param["search_time"]));
 				$end_time = strtotime("+1 days", $start_time);
 				$query->whereBetweenTime("create_time", $start_time, $end_time);
 			}
 		};
-		$logs = \think\Db::name("activity_log")->field("id,description,ipaddr ip,port,create_time,user")->where($fun)->where(function (\think\db\Query $query) use($param) {
+		$visibility = function (\think\db\Query $query) {
+			ClientActivityLog::applyVisibilityFilter($query);
+		};
+		$logs = \think\Db::name("activity_log")->field("id,description,ipaddr ip,port,create_time,user")->where($fun)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
 				$query->whereOr("description", "like", "%{$search_desc}%");
@@ -96,7 +102,7 @@ class LogController extends \cmf\controller\HomeBaseController
 				return $value;
 			}
 		})->order("{$orderby} {$sorting}")->order("create_time", "DESC")->page($page)->limit($limit)->select()->toArray();
-		$count = \think\Db::name("activity_log")->where($fun)->where(function (\think\db\Query $query) use($param) {
+		$count = \think\Db::name("activity_log")->where($fun)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
 				$query->whereOr("description", "like", "%{$search_desc}%");

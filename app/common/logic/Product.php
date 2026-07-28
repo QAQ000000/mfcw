@@ -100,6 +100,7 @@ class Product
 		if (!is_array($pids)) {
 			$pids = [$pids];
 		}
+		clearCartIndexResponseCache();
 		$this->updateInfoCache();
 		$this->updateDetailCache($pids);
 		$this->updateListCache($pids);
@@ -135,7 +136,7 @@ class Product
 		$res = getZjmfUpstreamProductsInfo($zjmf_finance_api_id, [$upstream_pid], $timeout);
 		if ($res["status"] != 200) {
 			$desc = "{$log}获取供应商'{$api_name}'商品版本信息失败,请检查供应商接口是否可用或联系供应商更新财务系统至最新版本,报错信息:{$res["msg"]}";
-			active_log_final($desc, 0, 0);
+			active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 0);
 			return ["status" => 400, "msg" => "【" . $api_name . "】无法链接,本地数据可能与上游数据不一致!"];
 		}
 		$info = $res["data"]["info"][0];
@@ -158,7 +159,7 @@ class Product
 			$res = getZjmfUpstreamProductsDetail($zjmf_finance_api_id, [$upstream_pid], $timeout);
 			if ($res["status"] != 200) {
 				$desc = "{$log}获取供应商'{$api_name}'商品详细信息失败,请检查供应商接口是否可用或联系供应商更新财务系统至最新版本,报错信息:{$res["msg"]}";
-				active_log_final($desc, 0, 0);
+				active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 0);
 				return ["status" => 400, "msg" => "【" . $api_name . "】无法链接,本地数据可能与上游数据不一致!"];
 			}
 			$upstream_data = $upstream_product = $res["data"]["detail"][$upstream_pid];
@@ -173,7 +174,7 @@ class Product
 			$res = $this->baseUpdateProduct($upstream_data, $product, $rate);
 			if ($res["status"] != 200) {
 				$desc = "{$log}同步供应商'{$api_name}'商品'{$upstream_data["name"]}'失败,本地#PRODUCT ID:{$id},报错信息:{$res["msg"]}";
-				active_log_final($desc, 0, 0);
+				active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 0);
 				return $res;
 			}
 		} else {
@@ -189,16 +190,46 @@ class Product
 			$desc = "{$log}同步供应商'{$api_name}'商品'{$info["name"]}'成功,本地#PRODUCT ID:{$id}";
 			if (isset($param["page_type"]) && $param["page_type"] == "set_config_page") {
 			} else {
-				active_log_final($desc, 0, 0);
+				active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 0);
 			}
 		}
 		return ["status" => 200, "msg" => "同步数据成功"];
+	}
+	public function syncProductForCart($param)
+	{
+		$pid = intval($param["pid"] ?? 0);
+		if ($pid <= 0) {
+			return ["status" => 400, "msg" => "商品不存在"];
+		}
+		$success_key = "cart_product_sync_success_" . $pid;
+		$failure_key = "cart_product_sync_failure_" . $pid;
+		$lock_key = "cart_product_sync_lock_" . $pid;
+		if (cache($success_key) || cache($failure_key) || cache($lock_key)) {
+			return ["status" => 200, "msg" => "使用最近同步的商品数据"];
+		}
+		$timeout = max(1, floatval($param["timeout"] ?? 1));
+		cache($lock_key, 1, intval(ceil($timeout)) + 2);
+		try {
+			$result = $this->syncProduct($param);
+			if (($result["status"] ?? 400) == 200) {
+				cache($success_key, 1, 15);
+			} else {
+				cache($failure_key, 1, 60);
+			}
+			return $result;
+		} catch (\Throwable $e) {
+			cache($failure_key, 1, 60);
+			return ["status" => 400, "msg" => "供应商同步失败，已使用本地数据"];
+		} finally {
+			cache($lock_key, null);
+		}
 	}
 	public function cronSyncProduct()
 	{
 		$apis = \think\Db::name("zjmf_finance_api")->field("id,name")->where("type", "zjmf_api")->select()->toArray();
 		$currency_arr = $this->getCurrencyRateCache();
 		$local_currency = \think\Db::name("currencies")->where("default", 1)->value("code");
+		$updated_product_ids = [];
 		foreach ($apis as $api) {
 			$id = $api["id"];
 			$api_name = $api["name"];
@@ -213,7 +244,7 @@ class Product
 				$infos = $res["data"]["info"];
 				$products = \think\Db::name("products")->field("id,name,description,upstream_pid,upstream_version,upstream_price_type,location_version,zjmf_api_id,gid,pay_type,
                     upstream_stock_control,upstream_qty")->where("zjmf_api_id", $id)->select()->toArray();
-				$pids = $local_products = $local_pids = $exist = [];
+				$pids = $local_products = $exist = [];
 				foreach ($infos as $info) {
 					foreach ($products as $product) {
 						if ($info["id"] == $product["upstream_pid"]) {
@@ -221,10 +252,10 @@ class Product
 							if ($info["location_version"] != $product["upstream_version"]) {
 								$pids[] = $info["id"];
 								$local_products[$info["id"]] = $product;
-								$local_pids[] = $product["id"];
 							}
-							if ($info["stock_control"] != $product["upstream_stock_control"] || $info["qty"] != $product["stock_control"]) {
+							if ($info["stock_control"] != $product["upstream_stock_control"] || $info["qty"] != $product["upstream_qty"]) {
 								\think\Db::name("products")->where("id", $product["id"])->update(["upstream_qty" => $info["qty"], "upstream_stock_control" => $info["stock_control"]]);
+								$updated_product_ids[] = $product["id"];
 							}
 						}
 					}
@@ -232,7 +263,7 @@ class Product
 				foreach ($products as $v) {
 					if (!in_array($v["upstream_pid"], $exist)) {
 						$desc = "商品'{$v["name"]}'无法同步,本地#PRODUCT ID:{$v["id"]},原因:供应商'{$api_name}'已删除该商品,请及时处理";
-						active_log_final($desc, 0, 5);
+						active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 5);
 					}
 				}
 				$concurrent = $this->concurrent;
@@ -254,27 +285,31 @@ class Product
 								$res = $this->customUpdateProduct($value, $local_product, $rate);
 							}
 							if ($res["status"] == 200) {
-								$this->updateCache($local_pids);
+								$updated_product_ids[] = $local_product["id"];
 								$desc = "定时任务同步供应商'{$api_name}'商品'{$value["name"]}'成功,本地#PRODUCT ID:" . $local_product["id"];
-								active_log_final($desc, 0, 5);
+								active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 5);
 							} else {
 								$desc = "定时任务同步供应商'{$api_name}'商品'{$value["name"]}'失败,本地#PRODUCT ID:{$local_product["id"]},报错信息:{$res["msg"]}";
-								active_log_final($desc, 0, 5);
+								active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 5);
 							}
 						}
 					} else {
 						$desc = "定时任务获取供应商'{$api_name}'商品详细信息失败,请检查供应商接口是否可用或联系供应商更新财务系统至最新版本,报错信息:{$res["msg"]}";
-						active_log_final($desc, 0, 5);
+						active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 5);
 					}
 				}
 				if (empty($pids[0])) {
 					$desc = "供应商'{$api_name}'暂无商品需要同步";
-					active_log_final($desc, 0, 5);
+					active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 5);
 				}
 			} else {
 				$desc = "定时任务获取供应商'{$api_name}'商品版本信息失败,请检查供应商接口是否可用或联系供应商更新财务系统至最新版本,报错信息:{$res["msg"]}";
-				active_log_final($desc, 0, 5);
+				active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 5);
 			}
+		}
+		$updated_product_ids = array_values(array_unique(array_map("intval", $updated_product_ids)));
+		if (!empty($updated_product_ids)) {
+			$this->updateCache($updated_product_ids);
 		}
 		return true;
 	}

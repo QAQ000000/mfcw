@@ -5,6 +5,8 @@ namespace app\common\logic;
 class Cart
 {
 	protected $recurringCycles;
+	private static $defaultConfigSnapshots = [];
+	private static $defaultConfigSnapshotVersion;
 	public function getRecurringCycles()
 	{
 		return $this->recurringCycles = array_keys(config("billing_cycle"));
@@ -24,7 +26,7 @@ class Cart
 	}
 	public function getProductCycle($pid, $currencyid)
 	{
-		$product = \think\Db::name("products")->field("id,name,description,pay_type,host,password,allow_qty,stock_control,qty")->where("id", $pid)->find();
+		$product = \think\Db::name("products")->field("id,name,description,pay_type,host,password,allow_qty,stock_control,qty,type")->where("id", $pid)->find();
 		$product = array_map(function ($v) {
 			return is_string($v) ? htmlspecialchars_decode($v, ENT_QUOTES) : $v;
 		}, $product);
@@ -252,10 +254,15 @@ class Cart
 	}
 	public function getProductDefaultConfigPrice($pid, $currency, $billingcycle, &$rebate_total, &$setupfee_total = 0)
 	{
-		$options = \think\Db::name("product_config_options")->alias("a")->field("a.id as cid,a.option_type,a.qty_minimum,a.is_discount,a.option_name,a.is_rebate")->leftJoin("product_config_groups b", "a.gid = b.id")->leftJoin("product_config_links c", "c.gid = b.id")->leftJoin("products d", "c.pid = d.id")->where("d.id", $pid)->where("a.hidden", 0)->select()->toArray();
+		$snapshot = $this->getDefaultConfigSnapshot($currency);
+		$options = $snapshot["options_by_product"][$pid] ?? [];
 		if ($options) {
-			$options_ids = array_column($options, "cid");
-			$field_options = \think\Db::name("product_config_options")->whereIn("id", $options_ids)->select()->toArray();
+			$field_options = [];
+			foreach ($options as $option) {
+				$field_option = $option;
+				$field_option["id"] = $option["cid"];
+				$field_options[] = $field_option;
+			}
 			$_options = $this->optionHandleLinkAgeLevel($field_options);
 			$filter_ids = array_column($_options, "id");
 			$options = array_filter($options, function ($v) use($filter_ids) {
@@ -266,11 +273,11 @@ class Cart
 		$config_total = 0;
 		$edition = getEdition();
 		foreach ($options as $option) {
-			$pricing = \think\Db::name("pricing")->alias("a")->field("a.*,b.qty_minimum")->leftJoin("product_config_options_sub b", "a.relid = b.id")->where("a.type", "configoptions")->where("a.currency", $currency)->where("b.hidden", 0)->where("b.config_id", $option["cid"])->order("b.sort_order", "ASC")->order("a.relid", "asc")->find();
-			$qty_min = $pricing["qty_minimum"];
+			$pricing = $snapshot["default_pricing_by_option"][$option["cid"]] ?? [];
+			$qty_min = $pricing["qty_minimum"] ?? 0;
 			if (judgeQuantity($option["option_type"])) {
 				if (judgeQuantityStage($option["option_type"])) {
-					$sum = quantityStagePrice($option["cid"], $currency, $qty_min, $billingcycle);
+					$sum = $this->quantityStagePriceFromSnapshot($snapshot["pricing_by_option"][$option["cid"]] ?? [], $qty_min, $billingcycle);
 					$config_total += $sum[0];
 					$config_total += $sum[1];
 					if ($option["is_rebate"] || !$edition) {
@@ -310,6 +317,110 @@ class Cart
 			}
 		}
 		return $config_total;
+	}
+	private function getDefaultConfigSnapshot($currency)
+	{
+		$currency = is_array($currency) ? intval($currency["id"] ?? 0) : intval($currency);
+		$version = (string) (cache("cart_catalog_snapshot_version") ?: "1");
+		if (self::$defaultConfigSnapshotVersion !== $version) {
+			self::$defaultConfigSnapshots = [];
+			self::$defaultConfigSnapshotVersion = $version;
+		}
+		$request_key = (string) $currency;
+		if (isset(self::$defaultConfigSnapshots[$request_key])) {
+			return self::$defaultConfigSnapshots[$request_key];
+		}
+		$cache_key = "cart_default_config_snapshot_" . $currency;
+		$snapshot = json_decode(cache($cache_key), true);
+		if (is_array($snapshot) && (string) ($snapshot["version"] ?? "") === $version && isset($snapshot["options_by_product"], $snapshot["pricing_by_option"], $snapshot["default_pricing_by_option"])) {
+			self::$defaultConfigSnapshots[$request_key] = $snapshot;
+			return $snapshot;
+		}
+		$rows = \think\Db::name("product_config_options")->alias("a")
+			->field("c.pid as product_id,a.id as cid,a.option_type,a.qty_minimum as option_qty_minimum,a.is_discount,a.option_name,a.is_rebate,a.linkage_pid,a.linkage_top_pid,b.id as sub_id,b.hidden as sub_hidden,b.qty_minimum,b.qty_maximum,b.sort_order as sub_sort_order,p.*")
+			->join("product_config_links c", "c.gid=a.gid")
+			->leftJoin("product_config_options_sub b", "b.config_id=a.id")
+			->leftJoin("pricing p", "p.relid=b.id AND p.type='configoptions' AND p.currency=" . $currency)
+			->where("a.hidden", 0)
+			->order("a.id", "asc")
+			->order("b.sort_order", "asc")
+			->order("p.relid", "asc")
+			->select()->toArray();
+		$snapshot = ["version" => $version, "options_by_product" => [], "pricing_by_option" => [], "default_pricing_by_option" => []];
+		$seen_pricing = [];
+		foreach ($rows as $row) {
+			$pid = intval($row["product_id"]);
+			$cid = intval($row["cid"]);
+			if (!isset($snapshot["options_by_product"][$pid][$cid])) {
+				$snapshot["options_by_product"][$pid][$cid] = [
+					"cid" => $cid,
+					"option_type" => $row["option_type"],
+					"qty_minimum" => $row["option_qty_minimum"],
+					"is_discount" => $row["is_discount"],
+					"option_name" => $row["option_name"],
+					"is_rebate" => $row["is_rebate"],
+					"linkage_pid" => $row["linkage_pid"],
+					"linkage_top_pid" => $row["linkage_top_pid"],
+				];
+			}
+			$sub_id = intval($row["sub_id"] ?? 0);
+			if ($sub_id > 0 && !empty($row["relid"]) && empty($seen_pricing[$cid][$sub_id])) {
+				$sub_hidden = intval($row["sub_hidden"] ?? 0);
+				$pricing = $row;
+				unset($pricing["product_id"], $pricing["cid"], $pricing["option_type"], $pricing["option_qty_minimum"], $pricing["is_discount"], $pricing["option_name"], $pricing["is_rebate"], $pricing["linkage_pid"], $pricing["linkage_top_pid"], $pricing["sub_id"], $pricing["sub_hidden"], $pricing["sub_sort_order"]);
+				$snapshot["pricing_by_option"][$cid][] = $pricing;
+				if ($sub_hidden === 0 && !isset($snapshot["default_pricing_by_option"][$cid])) {
+					$snapshot["default_pricing_by_option"][$cid] = $pricing;
+				}
+				$seen_pricing[$cid][$sub_id] = true;
+			}
+		}
+		foreach ($snapshot["options_by_product"] as &$product_options) {
+			$product_options = array_values($product_options);
+		}
+		unset($product_options);
+		cache($cache_key, json_encode($snapshot), 900);
+		self::$defaultConfigSnapshots[$request_key] = $snapshot;
+		return $snapshot;
+	}
+	private function quantityStagePriceFromSnapshot($pricings, $quantity, $billingcycle, $last_price = 0, $last_setup = 0)
+	{
+		if ($quantity == 0) {
+			return [0, 0];
+		}
+		usort($pricings, function ($a, $b) {
+			return intval($a["qty_maximum"] ?? 0) <=> intval($b["qty_maximum"] ?? 0);
+		});
+		$min = null;
+		$pricing = [];
+		foreach ($pricings as $key => $row) {
+			if ($quantity <= $row["qty_maximum"] && $row["qty_minimum"] <= $quantity) {
+				$min = $key;
+				$pricing = $row;
+				break;
+			}
+		}
+		$price_type = config("price_type")[$billingcycle] ?? ["", ""];
+		if (!empty($pricing) && $pricing["qty_minimum"] != 0) {
+			$quantity = $quantity - $pricing["qty_minimum"] + 1;
+		}
+		if (!empty($pricing)) {
+			$price = ($pricing[$price_type[0]] ?? 0) * $quantity;
+			$setup = $pricing[$price_type[1]] ?? 0;
+		} else {
+			$price = $last_price * $quantity;
+			$setup = $last_setup;
+		}
+		if ($quantity > 0 && $min !== null) {
+			$previous_max = intval($pricings[$min - 1]["qty_maximum"] ?? 0);
+			if (($pricing["qty_minimum"] ?? 0) > 1) {
+				$sum = $this->quantityStagePriceFromSnapshot($pricings, $previous_max, $billingcycle, floatval($pricing[$price_type[0]] ?? 0), floatval($pricing[$price_type[1]] ?? 0));
+			} else {
+				$sum = $this->quantityStagePriceFromSnapshot($pricings, $previous_max, $billingcycle);
+			}
+			$price = $sum[0] + $price;
+		}
+		return [$price, floatval($setup)];
 	}
 	public function optionHandleLinkAgeLevel($data)
 	{

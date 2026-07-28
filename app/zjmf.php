@@ -206,7 +206,7 @@ function zjmfCurl($api_id, $path, $data = [], $timeout = 30, $request = "POST")
 		$login_url = $url . "/zjmf_api_login";
 		$login_data = ["username" => $api["username"], "password" => aesPasswordDecode($api["password"])];
 	}
-	$jwt = zjmfApiLogin($api_id, $login_url, $login_data);
+	$jwt = zjmfApiLogin($api_id, $login_url, $login_data, false, $timeout);
 	if ($jwt["status"] != 200) {
 		return $jwt;
 	}
@@ -214,7 +214,7 @@ function zjmfCurl($api_id, $path, $data = [], $timeout = 30, $request = "POST")
 	$url = rtrim($url, "/") . "/" . $path;
 	$res = commonCurl($url, $data, $timeout, $request, $header);
 	if ($res["status"] == 405) {
-		$jwt = zjmfApiLogin($api_id, $login_url, $login_data, true);
+		$jwt = zjmfApiLogin($api_id, $login_url, $login_data, true, $timeout);
 		if ($jwt["status"] != 200) {
 			return $jwt;
 		}
@@ -238,7 +238,7 @@ function zjmfCurlHasFile($api_id, $path, $data = [], $timeout = 30, $file = [])
 		$login_url = $url . "/zjmf_api_login";
 		$login_data = ["username" => $api["username"], "password" => aesPasswordDecode($api["password"])];
 	}
-	$jwt = zjmfApiLogin($api_id, $login_url, $login_data);
+	$jwt = zjmfApiLogin($api_id, $login_url, $login_data, false, $timeout);
 	if ($jwt["status"] != 200) {
 		return $jwt;
 	}
@@ -246,7 +246,7 @@ function zjmfCurlHasFile($api_id, $path, $data = [], $timeout = 30, $file = [])
 	$url = rtrim($url, "/") . "/" . $path;
 	$res = curlHasFile($url, $data, $timeout, $header, $file);
 	if ($res["status"] == 405) {
-		$jwt = zjmfApiLogin($api_id, $login_url, $login_data, true);
+		$jwt = zjmfApiLogin($api_id, $login_url, $login_data, true, $timeout);
 		if ($jwt["status"] != 200) {
 			return $jwt;
 		}
@@ -358,13 +358,14 @@ function curlHasFile($url, $bodys, $timeout, $headers, $file)
  * @version v1
  * @param   int     $id    APIID
  * @param   boolean $force 是否强制刷新缓存
+ * @param   int     $timeout 登录请求超时时间
  */
-function zjmfApiLogin($id, $url, $data, $force = false)
+function zjmfApiLogin($id, $url, $data, $force = false, $timeout = 30)
 {
 	$key = "zjmf_finance_jwt_" . $id;
 	$jwt = \think\facade\Cache::get($key);
 	if (empty($jwt) || $force) {
-		$res = commonCurl($url, $data);
+		$res = commonCurl($url, $data, $timeout);
 		if ($res["status"] == 200) {
 			$jwt = $res["jwt"];
 			\think\facade\Cache::set($key, $jwt, 5400.0);
@@ -399,6 +400,9 @@ function commonCurl($url, $data = [], $timeout = 30, $request = "POST", $header 
 		curl_setopt($curl, CURLOPT_URL, $url);
 	}
 	curl_setopt($curl, CURLOPT_TIMEOUT, $timeout);
+	if ($timeout <= 2) {
+		curl_setopt($curl, CURLOPT_CONNECTTIMEOUT, 1);
+	}
 	curl_setopt($curl, CURLOPT_USERAGENT, "Mozilla/5.0 (compatible; MSIE 5.01; Windows NT 5.0)");
 	curl_setopt($curl, CURLOPT_FOLLOWLOCATION, 1);
 	curl_setopt($curl, CURLOPT_HEADER, 0);

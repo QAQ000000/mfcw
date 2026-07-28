@@ -79,10 +79,10 @@ class CartController extends CommonController
 			$_product_groups[$second["gid"]][$second_key]["name"] = $second["name"];
 		}
 		foreach ($first_groups as $first_key => $first) {
-			if (!empty($_product_groups[$second["gid"]])) {
+			if (!empty($_product_groups[$first["id"]])) {
 				$groups[$first_key]["id"] = $first["id"];
 				$groups[$first_key]["name"] = $first["name"];
-				$groups[$first_key]["second"] = array_merge($_product_groups[$second["gid"]]);
+				$groups[$first_key]["second"] = array_merge($_product_groups[$first["id"]]);
 			}
 		}
 		if (count($groups) == 0) {
@@ -646,10 +646,18 @@ class CartController extends CommonController
 				return is_string($v) ? htmlspecialchars_decode($v, ENT_QUOTES) : $v;
 			}, $product);
 		}
+		$product_pricing = [];
+		$product_ids = array_column($filterproducts ?? [], "id");
+		if (!empty($product_ids)) {
+			$pricing_rows = \think\Db::name("pricing")->where("type", "product")->whereIn("relid", $product_ids)->where("currency", $currencyid)->select()->toArray();
+			foreach ($pricing_rows as $pricing_row) {
+				$product_pricing[$pricing_row["relid"]] = $pricing_row;
+			}
+		}
 		foreach ($filterproducts as $key => $v) {
 			if (!empty($v)) {
 				$paytype = (array) json_decode($v["pay_type"]);
-				$pricing = \think\Db::name("pricing")->where("type", "product")->where("relid", $v["id"])->where("currency", $currencyid)->find();
+				$pricing = $product_pricing[$v["id"]] ?? [];
 				if (!empty($paytype["pay_ontrial_status"])) {
 					if ($pricing["ontrial"] >= 0) {
 						$v["product_price"] = $pricing["ontrial"];
@@ -948,15 +956,23 @@ class CartController extends CommonController
 				}
 			}
 		}
-		foreach ($products as $kkk => $product) {
-			$filterproducts[$kkk] = array_map(function ($v) {
-				return is_string($v) ? htmlspecialchars_decode($v, ENT_QUOTES) : $v;
-			}, $product);
-		}
-		foreach ($filterproducts as $key => $v) {
-			if (!empty($v)) {
-				$paytype = (array) json_decode($v["pay_type"]);
-				$pricing = \think\Db::name("pricing")->where("type", "product")->where("relid", $v["id"])->where("currency", $currencyid)->find();
+			foreach ($products as $kkk => $product) {
+				$filterproducts[$kkk] = array_map(function ($v) {
+					return is_string($v) ? htmlspecialchars_decode($v, ENT_QUOTES) : $v;
+				}, $product);
+			}
+			$product_pricing = [];
+			$product_ids = array_column($filterproducts ?? [], "id");
+			if (!empty($product_ids)) {
+				$pricing_rows = \think\Db::name("pricing")->where("type", "product")->whereIn("relid", $product_ids)->where("currency", $currencyid)->select()->toArray();
+				foreach ($pricing_rows as $pricing_row) {
+					$product_pricing[$pricing_row["relid"]] = $pricing_row;
+				}
+			}
+			foreach ($filterproducts as $key => $v) {
+				if (!empty($v)) {
+					$paytype = (array) json_decode($v["pay_type"]);
+					$pricing = $product_pricing[$v["id"]] ?? [];
 				if (!empty($paytype["pay_ontrial_status"])) {
 					if ($pricing["ontrial"] >= 0) {
 						$v["product_price"] = $pricing["ontrial"];
@@ -1140,7 +1156,8 @@ class CartController extends CommonController
 			}
 		}
 		$newfilterproducts = array_values($newfilterproducts);
-		return jsons(["status" => 200, "msg" => lang("SUCCESS MESSAGE"), "product_groups" => $productgroups ?? [], "currencies" => $currenciesfilter, "default_currency" => $currency, "products" => $newfilterproducts, "first_groups" => $first_groups, "order_page_style" => intval(configuration("order_page_style"))]);
+			$response_data = ["status" => 200, "msg" => lang("SUCCESS MESSAGE"), "product_groups" => $productgroups ?? [], "currencies" => $currenciesfilter, "default_currency" => $currency, "products" => $newfilterproducts, "first_groups" => $first_groups, "order_page_style" => intval(configuration("order_page_style"))];
+		return jsons($response_data);
 	}
 	/**
 	 * @title 选择配置页面
@@ -1166,8 +1183,8 @@ class CartController extends CommonController
 			$upstream_pid = $pro["upstream_pid"];
 			$api = \think\Db::name("zjmf_finance_api")->where("id", $zjmf_finance_api_id)->find();
 			if ($api["auto_update"] == 1) {
-				$param = ["pid" => $pid, "zjmf_finance_api_id" => $zjmf_finance_api_id, "upstream_pid" => $upstream_pid, "timeout" => 2, "page_type" => "set_config_page", "upstream_price_type" => $pro["upstream_price_type"], "upstream_price_value" => $pro["upstream_price_value"]];
-				(new \app\common\logic\Product())->syncProduct($param);
+				$param = ["pid" => $pid, "zjmf_finance_api_id" => $zjmf_finance_api_id, "upstream_pid" => $upstream_pid, "timeout" => 1, "page_type" => "set_config_page", "upstream_price_type" => $pro["upstream_price_type"], "upstream_price_value" => $pro["upstream_price_value"]];
+				(new \app\common\logic\Product())->syncProductForCart($param);
 			}
 		}
 		$servers = \think\Db::name("products")->alias("p")->field("s.id,s.name,s.noc")->leftJoin("server_groups sg", "sg.id = p.server_group")->leftJoin("servers s", "s.gid = sg.id")->where("p.id", $pid)->select()->toArray();
