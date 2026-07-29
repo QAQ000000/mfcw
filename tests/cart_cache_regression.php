@@ -90,6 +90,22 @@ function sourceMatches($file, $pattern, $message)
 }
 
 $logic = new TestableCartProductLogic();
+$productReflection = new ReflectionClass($logic);
+$decodeDirtyState = $productReflection->getMethod("decodeCatalogDirtyState");
+$decodeDirtyState->setAccessible(true);
+$mergeDirtyState = $productReflection->getMethod("mergeCatalogDirtyState");
+$mergeDirtyState->setAccessible(true);
+assertTrue(
+	$decodeDirtyState->invoke($logic, "legacy-generation") === ["generation" => "legacy-generation", "pids" => []],
+	"legacy dirty generations must remain retryable"
+);
+$mergedDirtyState = json_decode($mergeDirtyState->invoke(
+	$logic,
+	json_encode(["generation" => "first", "pids" => [42, 77]]),
+	"second",
+	[77, 999]
+), true);
+assertTrue($mergedDirtyState === ["generation" => "second", "pids" => [42, 77, 999]], "dirty retries must retain the union of affected product IDs");
 $previousUmask = umask(0022);
 $first = $logic->acquire(42, 20);
 umask($previousUmask);
@@ -155,8 +171,10 @@ sourceContains($root . "/app/common/logic/Product.php", [
 	'@chmod($path, 0640);',
 	'$deadline = microtime(true) + max(0, floatval($waitSeconds));',
 	'return $this->acquireFileLock("catalog-cache", "catalog", 120, $nonBlocking, $nonBlocking ? 0 : 5);',
-	'$this->markCatalogCacheDirty($context, $error);',
+	'$this->markCatalogCacheDirty($context, $error, $pids);',
 	'public function retryDirtyCacheInvalidation()',
+	'$this->mergeCatalogDirtyState($row["value"] ?? "0", $generation, $pids)',
+	'array_merge($currentPids ?: [], $dirtyState["pids"])',
 	'$this->updateInfoCacheUnlocked()',
 	'$this->updateDetailCacheUnlocked($pids)',
 	'$this->updateListCacheUnlocked([], true)',

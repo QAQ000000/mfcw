@@ -107,6 +107,16 @@ namespace {
     assertLogCondition($internal['description'] === '上游原始错误', 'inline marker must not be stored');
     assertLogCondition($internal['client_visible'] === 0, 'internal marker must set structured visibility');
 
+    $hookMetadata = ClientActivityLog::hookMetadata(
+        ClientActivityLog::markInternal('上游原始错误', 'supplier'),
+        $internal['client_visible']
+    );
+    assertLogCondition($hookMetadata === ['client_visible' => 0, 'source' => 'supplier'], 'log hooks must receive structured supplier visibility');
+    assertLogCondition(
+        ClientActivityLog::hookMetadata('普通日志') === ['client_visible' => 1, 'source' => ''],
+        'ordinary log hooks must remain client visible without an internal source'
+    );
+
     $cronInternal = ClientActivityLog::prepareForStorage(
         'Cron_' . ClientActivityLog::markInternal('同步失败', 'supplier')
     );
@@ -288,6 +298,18 @@ namespace {
         'ClientActivityLog::applyVisibilityFilter($query);',
         'the OpenAPI login-log endpoint must enforce structured visibility'
     );
+    foreach (['app/common.php', 'app/common/logic/Log.php'] as $logWriter) {
+        assertSourceContains(
+            $logWriter,
+            'ClientActivityLog::hookMetadata',
+            $logWriter . ' must pass structured visibility to log hooks'
+        );
+        assertSourceContains(
+            $logWriter,
+            'array_merge(["description" => $hook',
+            $logWriter . ' must preserve the marked description for legacy hook filters'
+        );
+    }
 
     fwrite(STDOUT, 'client activity log regression checks passed' . PHP_EOL);
 }

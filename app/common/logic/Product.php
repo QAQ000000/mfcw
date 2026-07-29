@@ -51,15 +51,16 @@ class Product
 	}
 	public function updateDetailCache($pids = [])
 	{
+		$pids = $this->normalizeProductIds($pids);
 		$lock = $this->acquireCatalogCacheLock();
 		if ($lock === false) {
-			$this->markCatalogCacheDirty("detail cache rebuild", "无法取得商品缓存构建锁");
+			$this->markCatalogCacheDirty("detail cache rebuild", "无法取得商品缓存构建锁", $pids);
 			return false;
 		}
 		try {
 			$result = $this->updateDetailCacheUnlocked($pids);
 			if ($result !== true) {
-				$this->markCatalogCacheDirty("detail cache rebuild", "商品详情缓存写入失败");
+				$this->markCatalogCacheDirty("detail cache rebuild", "商品详情缓存写入失败", $pids);
 			}
 			return $result;
 		} finally {
@@ -161,7 +162,7 @@ class Product
 		$pids = $this->normalizeProductIds($pids);
 		$lock = $this->acquireCatalogCacheLock();
 		if ($lock === false) {
-			$this->markCatalogCacheDirty("catalog cache rebuild", "无法取得商品缓存构建锁");
+			$this->markCatalogCacheDirty("catalog cache rebuild", "无法取得商品缓存构建锁", $pids);
 			return false;
 		}
 		try {
@@ -183,7 +184,7 @@ class Product
 			if ($this->invalidateCacheUnlocked($pids) !== true) {
 				$invalidateError = ",失败后缓存清理未完成";
 			}
-			$this->markCatalogCacheDirty("catalog cache rebuild", $e->getMessage() . $invalidateError);
+			$this->markCatalogCacheDirty("catalog cache rebuild", $e->getMessage() . $invalidateError, $pids);
 			return false;
 		} finally {
 			$this->releaseFileLock($lock);
@@ -204,6 +205,7 @@ class Product
 	}
 	public function invalidateCacheOrMarkDirty($pids = [], $context = "")
 	{
+		$pids = $this->normalizeProductIds($pids);
 		try {
 			if ($this->invalidateCache($pids) === true) {
 				return true;
@@ -212,10 +214,10 @@ class Product
 		} catch (\Throwable $e) {
 			$error = $e->getMessage();
 		}
-		$this->markCatalogCacheDirty($context, $error);
+		$this->markCatalogCacheDirty($context, $error, $pids);
 		return false;
 	}
-	private function markCatalogCacheDirty($context, $error)
+	private function markCatalogCacheDirty($context, $error, $pids = [])
 	{
 		if (!class_exists("\\think\\Db")) {
 			error_log("Product catalog cache is dirty: " . $context . " - " . $error);
@@ -231,10 +233,11 @@ class Product
 			\think\Db::startTrans();
 			try {
 				$row = \think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->lock(true)->find();
+				$dirtyValue = $this->mergeCatalogDirtyState($row["value"] ?? "0", $generation, $pids);
 				if (!empty($row)) {
-					\think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->update(["value" => $generation, "update_time" => $now]);
+					\think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->update(["value" => $dirtyValue, "update_time" => $now]);
 				} else {
-					\think\Db::name("configuration")->insert(["setting" => $this->cache_dirty_setting, "value" => $generation, "create_time" => $now, "update_time" => $now]);
+					\think\Db::name("configuration")->insert(["setting" => $this->cache_dirty_setting, "value" => $dirtyValue, "create_time" => $now, "update_time" => $now]);
 				}
 				\think\Db::commit();
 			} catch (\Throwable $e) {
@@ -248,21 +251,49 @@ class Product
 			return false;
 		}
 	}
+	private function mergeCatalogDirtyState($currentValue, $generation, $pids)
+	{
+		$current = $this->decodeCatalogDirtyState($currentValue);
+		$current["generation"] = (string) $generation;
+		$current["pids"] = $this->normalizeProductIds(array_merge($current["pids"], (array) $pids));
+		$encoded = json_encode($current);
+		if ($encoded === false) {
+			throw new \RuntimeException("商品缓存重试状态编码失败");
+		}
+		return $encoded;
+	}
+	private function decodeCatalogDirtyState($value)
+	{
+		$value = (string) $value;
+		if ($value === "" || $value === "0") {
+			return ["generation" => "", "pids" => []];
+		}
+		$decoded = json_decode($value, true);
+		if (!is_array($decoded) || !isset($decoded["generation"])) {
+			return ["generation" => $value, "pids" => []];
+		}
+		return [
+			"generation" => (string) $decoded["generation"],
+			"pids" => $this->normalizeProductIds($decoded["pids"] ?? []),
+		];
+	}
 	public function retryDirtyCacheInvalidation()
 	{
 		if (!class_exists("\\think\\Db")) {
 			return false;
 		}
 		try {
-			$generation = (string) \think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->value("value");
-			if ($generation === "" || $generation === "0") {
+			$dirtyValue = (string) \think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->value("value");
+			if ($dirtyValue === "" || $dirtyValue === "0") {
 				return true;
 			}
-			$pids = \think\Db::name("products")->column("id");
-			if ($this->invalidateCache($pids ?: []) !== true) {
+			$dirtyState = $this->decodeCatalogDirtyState($dirtyValue);
+			$currentPids = \think\Db::name("products")->column("id");
+			$pids = $this->normalizeProductIds(array_merge($currentPids ?: [], $dirtyState["pids"]));
+			if ($this->invalidateCache($pids) !== true) {
 				return false;
 			}
-			$cleared = \think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->where("value", $generation)->update(["value" => 0, "update_time" => time()]);
+			$cleared = \think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->where("value", $dirtyValue)->update(["value" => 0, "update_time" => time()]);
 			return $cleared > 0;
 		} catch (\Throwable $e) {
 			error_log("Failed to retry product catalog cache invalidation: " . $e->getMessage());
@@ -291,7 +322,7 @@ class Product
 		}
 		$lock = $this->acquireCatalogCacheLock(true);
 		if ($lock === false) {
-			$this->markCatalogCacheDirty($context, "无法取得商品缓存刷新锁");
+			$this->markCatalogCacheDirty($context, "无法取得商品缓存刷新锁", $pids);
 			return false;
 		}
 		try {
@@ -338,7 +369,7 @@ class Product
 			}
 			return true;
 		} catch (\Throwable $e) {
-			$this->markCatalogCacheDirty($context, $e->getMessage());
+			$this->markCatalogCacheDirty($context, $e->getMessage(), $pids);
 			return false;
 		} finally {
 			$this->releaseFileLock($lock);
@@ -744,12 +775,12 @@ class Product
 				if ($this->invalidateCache($pids) !== true) {
 					throw new \RuntimeException("无法取得商品缓存失效锁");
 				}
-				} catch (\Throwable $invalidateException) {
-					$invalidateError = ",二次失效失败:" . $invalidateException->getMessage();
-					error_log("Failed to invalidate cron product cache: " . $invalidateException->getMessage());
-				}
-				$this->markCatalogCacheDirty("cron supplier cache refresh: " . $apiName, $e->getMessage() . $invalidateError);
-				$desc = "定时任务刷新供应商'{$apiName}'商品缓存失败,已保留数据库同步结果,报错信息:" . $e->getMessage() . $invalidateError;
+			} catch (\Throwable $invalidateException) {
+				$invalidateError = ",二次失效失败:" . $invalidateException->getMessage();
+				error_log("Failed to invalidate cron product cache: " . $invalidateException->getMessage());
+			}
+			$this->markCatalogCacheDirty("cron supplier cache refresh: " . $apiName, $e->getMessage() . $invalidateError, $pids);
+			$desc = "定时任务刷新供应商'{$apiName}'商品缓存失败,已保留数据库同步结果,报错信息:" . $e->getMessage() . $invalidateError;
 			try {
 				active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 5);
 			} catch (\Throwable $logException) {
@@ -1319,7 +1350,7 @@ class Product
 		$pids = $this->normalizeProductIds($pids);
 		$lock = $this->acquireCatalogCacheLock();
 		if ($lock === false) {
-			$this->markCatalogCacheDirty("list cache rebuild", "无法取得商品缓存构建锁");
+			$this->markCatalogCacheDirty("list cache rebuild", "无法取得商品缓存构建锁", $pids);
 			return false;
 		}
 		try {
@@ -1328,7 +1359,7 @@ class Product
 			}
 			$result = $this->updateListCacheUnlocked($pids, $force);
 			if ($result !== true) {
-				$this->markCatalogCacheDirty("list cache rebuild", "商品列表缓存写入失败");
+				$this->markCatalogCacheDirty("list cache rebuild", "商品列表缓存写入失败", $pids);
 			}
 			return $result;
 		} finally {

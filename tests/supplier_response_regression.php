@@ -8,6 +8,11 @@ class SupplierResponseTestClientActivityLog
 	{
 		return "[internal:" . $source . "]" . $description;
 	}
+
+	public static function isSupplierApiType($apiType)
+	{
+		return in_array(strtolower((string) $apiType), ["zjmf_api", "resource", "manual", "whmcs"], true);
+	}
 }
 
 class_alias("SupplierResponseTestClientActivityLog", "app\\common\\logic\\ClientActivityLog");
@@ -21,6 +26,7 @@ function active_log_final($description, $userid = 0, $type = 0, $typeDataId = 0)
 }
 
 require dirname(__DIR__) . "/app/common/logic/Dcim.php";
+require dirname(__DIR__) . "/app/common/logic/Host.php";
 
 function assertSupplierCondition($condition, $message)
 {
@@ -98,6 +104,27 @@ assertSupplierCondition($adminVnc["password"] === "admin-pass" && $adminVnc["pas
 assertSupplierCondition($adminVnc["data"] === ["password" => "admin-pass", "url" => "wss://admin.invalid"], "administrator VNC responses must also expose the normalized data contract");
 assertSupplierCondition($adminVnc["task"] === "diagnostic", "administrator VNC responses must retain upstream diagnostic fields");
 $logic->is_admin = false;
+
+$hostLogic = new \app\common\logic\Host();
+$statusMethod = (new ReflectionClass($hostLogic))->getMethod("statusDataForClient");
+$statusMethod->setAccessible(true);
+$supplierStatus = $statusMethod->invoke($hostLogic, [
+	"status" => 200,
+	"data" => [
+		"status" => "on",
+		"des" => "supplier text",
+		"endpoint" => "https://supplier.invalid",
+		"debug" => "supplier stack",
+		"task_name" => "supplier task",
+	],
+], "zjmf_api");
+assertSupplierCondition($supplierStatus === ["status" => "on", "des" => "开机"], "customer status responses must use the local status allowlist");
+$unknownSupplierStatus = $statusMethod->invoke($hostLogic, ["data" => ["status" => "vendor-private", "debug" => "secret"]], "resource");
+assertSupplierCondition($unknownSupplierStatus === ["status" => "unknown", "des" => "未知"], "unknown supplier status values must fail closed");
+$hostLogic->is_admin = true;
+$adminStatusData = ["status" => "on", "endpoint" => "https://supplier.invalid", "debug" => "supplier stack", "task_name" => "supplier task"];
+assertSupplierCondition($statusMethod->invoke($hostLogic, ["data" => $adminStatusData], "resource") === $adminStatusData, "administrators must retain the complete supplier status response");
+$hostLogic->is_admin = false;
 
 $dcimMethods = ["traffic", "novnc", "reinstall", "cancelReinstall", "reinstallStatus", "detail", "refreshPowerStatus", "getTrafficUsage"];
 foreach ($dcimMethods as $method) {

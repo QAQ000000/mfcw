@@ -38,14 +38,16 @@ class Log
 		if (strpos($description, "password") !== false) {
 			$description = preg_replace("/(password(?:hash)?`=')(.*)(',|' )/", "\${1}--REDACTED--\${3}", $description);
 		}
-			$storageLog = ClientActivityLog::prepareForCurrentSchema($description);
-			$description = $storageLog["description"];
-			$idata = ["create_time" => time(), "description" => $description, "user" => $username, "uid" => $uid, "ipaddr" => $remote_ip];
-			if (isset($storageLog["client_visible"])) {
-				$idata["client_visible"] = $storageLog["client_visible"];
-			}
+		$hookDescription = $description;
+		$storageLog = ClientActivityLog::prepareForCurrentSchema($description);
+		$description = $storageLog["description"];
+		$idata = ["create_time" => time(), "description" => $description, "user" => $username, "uid" => $uid, "ipaddr" => $remote_ip];
+		if (isset($storageLog["client_visible"])) {
+			$idata["client_visible"] = $storageLog["client_visible"];
+		}
 		\think\Db::name("activity_log")->insert($idata);
-		hook("log_activity", ["description" => $description, "user" => $username, "uid" => \intval($uid), "ipaddress" => $remote_ip]);
+		$hookMetadata = ClientActivityLog::hookMetadata($hookDescription, $storageLog["client_visible"] ?? null);
+		hook("log_activity", array_merge(["description" => $hookDescription, "user" => $username, "uid" => \intval($uid), "ipaddress" => $remote_ip], $hookMetadata));
 	}
 	/**
 	 * @title 管理员登录登出日志

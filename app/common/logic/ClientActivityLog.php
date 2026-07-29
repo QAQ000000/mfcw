@@ -85,6 +85,23 @@ class ClientActivityLog
         return ['description' => (string) $description];
     }
 
+    public static function hookMetadata($description, $clientVisible = null)
+    {
+        $description = (string) $description;
+        $normalized = preg_replace('/^(?:Cron_)+/', '', $description);
+        $source = '';
+        if (preg_match('/^\[internal:([a-z0-9_-]+)\]/i', $normalized, $matches)) {
+            $source = strtolower($matches[1]);
+        }
+        if ($clientVisible === null) {
+            $clientVisible = self::isVisible($description) ? 1 : 0;
+        }
+        return [
+            'client_visible' => (int) $clientVisible,
+            'source' => $source,
+        ];
+    }
+
     public static function hasStructuredVisibility()
     {
         if (self::$structuredVisibility !== null) {

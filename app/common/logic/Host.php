@@ -14,6 +14,29 @@ class Host
 	{
 		return ClientActivityLog::clientSafeModuleError($message, $apiType, $this->is_admin, $fallback);
 	}
+	private function statusDataForClient($moduleResponse, $apiType)
+	{
+		$data = is_array($moduleResponse["data"] ?? null) ? $moduleResponse["data"] : [];
+		if ($this->is_admin || !ClientActivityLog::isSupplierApiType($apiType)) {
+			return $data;
+		}
+		$statusMap = [
+			"on" => "开机",
+			"off" => "关机",
+			"suspend" => "暂停",
+			"waiting" => "等待重启",
+			"process" => "任务处理中",
+			"paused" => "挂起",
+			"not_support" => "不支持电源控制",
+			"error" => "未知",
+			"unknown" => "未知",
+		];
+		$status = strtolower(trim((string) ($data["status"] ?? "unknown")));
+		if (!isset($statusMap[$status])) {
+			$status = "unknown";
+		}
+		return ["status" => $status, "des" => $statusMap[$status]];
+	}
 	private function recordInternalModuleDiagnostic($description, $uid, $hostId, $source)
 	{
 		error_log($description);
@@ -1434,7 +1457,7 @@ class Host
 			}
 			if ($module_res["status"] == "success" || $module_res["status"] == 200) {
 				$result["status"] = 200;
-				$result["data"] = $module_res["data"];
+				$result["data"] = $this->statusDataForClient($module_res, $host["api_type"] ?? "");
 			} else {
 				$result["status"] = 406;
 				$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "获取电源状态失败，请稍后重试或联系管理员");

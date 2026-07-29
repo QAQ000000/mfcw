@@ -1718,6 +1718,7 @@ function active_log_final($description, $userid = 0, $type = 0, $type_data_id = 
 		$usertype = "System";
 		$description = "Cron_" . $description;
 	}
+	$hook_description = $description;
 	$storage_log = \app\common\logic\ClientActivityLog::prepareForCurrentSchema($description);
 	$description = $storage_log["description"];
 	$idata = ["create_time" => time(), "description" => $description, "user" => $username ?? "", "usertype" => $usertype ?? "", "uid" => $userid ?? 0, "ipaddr" => $remote_ip, "type" => $type, "activeid" => $activeid ?? 0, "port" => $remote_port, "type_data_id" => $type_data_id ?? 0];
@@ -1731,7 +1732,8 @@ function active_log_final($description, $userid = 0, $type = 0, $type_data_id = 
 			\think\Db::name("admin_log")->where("sessionid", $session_id)->update(["lastvisit" => time()]);
 		}
 	}
-	hook("log_activity", ["description" => $description, "user" => $username, "uid" => intval($userid), "ipaddress" => $remote_ip]);
+	$hook_metadata = \app\common\logic\ClientActivityLog::hookMetadata($hook_description, $storage_log["client_visible"] ?? null);
+	hook("log_activity", array_merge(["description" => $hook_description, "user" => $username, "uid" => intval($userid), "ipaddress" => $remote_ip], $hook_metadata));
 }
 /**
  * @title 添加系统活动日志
