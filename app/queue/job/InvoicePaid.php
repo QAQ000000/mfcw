@@ -22,8 +22,9 @@ class InvoicePaid extends \app\queue\common\JobCommon
 	{
 		parent::handle($data);
 		$invoice = new \app\common\logic\Invoices();
+		$invoice->is_admin = !empty($data["is_admin"]);
 		list($invoiceid, $email) = [$data["invoiceid"] ?? 0, $data["email"] ?? true];
-		$invoice->processPaidInvoiceFinal($invoiceid, $email);
+		$invoice->processPaidInvoiceFinal($invoiceid, $email, $data["ip"] ?? "");
 	}
 	public function delaty(&$data)
 	{

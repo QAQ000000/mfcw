@@ -14,6 +14,160 @@ class Dcim
 	private $dir = CMF_ROOT . "public/vendor/dcim";
 	public $user_prefix = "";
 	public $log_prefix_error = "DCIM模块错误:";
+	private static $supplierDiagnosticSeen = [];
+	private function sanitizeSupplierDiagnostic($value, $key = "", $depth = 0)
+	{
+		if ($key !== "" && preg_match('/(?:pass(?:word)?|pwd|secret|token|api[_-]?key|accesshash|authorization|cookie|credential|crackpwd)/i', $key)) {
+			return "[redacted]";
+		}
+		if ($depth >= 6) {
+			return "[truncated]";
+		}
+		if (is_array($value)) {
+			$result = [];
+			$count = 0;
+			foreach ($value as $itemKey => $itemValue) {
+				if (++$count > 100) {
+					$result["__truncated__"] = true;
+					break;
+				}
+				$result[$itemKey] = $this->sanitizeSupplierDiagnostic($itemValue, (string) $itemKey, $depth + 1);
+			}
+			return $result;
+		}
+		if (is_object($value)) {
+			return $this->sanitizeSupplierDiagnostic((array) $value, $key, $depth + 1);
+		}
+		if (!is_string($value)) {
+			return $value;
+		}
+		$value = preg_replace('#(https?://)[^/@\\s]+@#i', '$1[redacted]@', $value);
+		return preg_replace('/((?:pass(?:word)?|pwd|secret|token|api[_-]?key|accesshash|authorization|cookie|credential|crackpwd)"?\\s*[:=]\\s*"?)[^"\\s,;&}]+/i', '$1[redacted]', $value);
+	}
+	private function shouldRecordSupplierDiagnostic($uid, $hostId, $action, $encoded)
+	{
+		$key = "_supplier_diagnostic_" . sha1(intval($uid) . "|" . intval($hostId) . "|" . $action . "|" . $encoded);
+		$now = time();
+		if (isset(self::$supplierDiagnosticSeen[$key]) && self::$supplierDiagnosticSeen[$key] > $now) {
+			return false;
+		}
+		try {
+			if (function_exists("cache") && cache($key)) {
+				self::$supplierDiagnosticSeen[$key] = $now + 300;
+				return false;
+			}
+			if (function_exists("cache")) {
+				cache($key, 1, 300);
+			}
+		} catch (\Throwable $e) {
+			error_log("Failed to persist supplier diagnostic throttle: " . $e->getMessage());
+		}
+		self::$supplierDiagnosticSeen[$key] = $now + 300;
+		return true;
+	}
+	private function recordSupplierDiagnostic($response, $uid, $hostId, $action)
+	{
+		$safeResponse = $this->sanitizeSupplierDiagnostic($response);
+		$encoded = is_array($safeResponse) ? json_encode($safeResponse, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : (string) $safeResponse;
+		if ($encoded === false || $encoded === "") {
+			$encoded = is_array($safeResponse) ? print_r($safeResponse, true) : "空响应";
+		}
+		if (strlen($encoded) > 4096) {
+			$encoded = function_exists("mb_strcut") ? mb_strcut($encoded, 0, 4096, "UTF-8") : substr($encoded, 0, 4096);
+			$encoded .= "...[truncated]";
+		}
+		if (!$this->shouldRecordSupplierDiagnostic($uid, $hostId, $action, $encoded)) {
+			return;
+		}
+		$description = sprintf("%s失败#Host ID:%d - 供应商响应:%s", $action, intval($hostId), $encoded);
+		try {
+			active_log_final(ClientActivityLog::markInternal($description, "supplier"), intval($uid), 2, intval($hostId));
+		} catch (\Throwable $e) {
+			error_log("Failed to record internal supplier diagnostic: " . $e->getMessage());
+		}
+	}
+	public function supplierFailureForClient($response, $uid, $hostId, $action, $fallback, $preserve = [])
+	{
+		$this->recordSupplierDiagnostic($response, $uid, $hostId, $action);
+		$message = "";
+		if (is_array($response) && isset($response["msg"])) {
+			$message = (string) $response["msg"];
+		}
+		if ($this->is_admin && is_array($response)) {
+			$result = $response;
+			$result["status"] = 400;
+			$result["msg"] = $message !== "" ? $this->log_prefix_error . $message : $fallback;
+			return $result;
+		}
+		$result = ["status" => 400, "msg" => $fallback];
+		if (is_array($response)) {
+			foreach ($preserve as $field) {
+				if (array_key_exists($field, $response)) {
+					$result[$field] = $response[$field];
+				}
+			}
+		}
+		return $result;
+	}
+	public function supplierSuccessForClient($response, $message, $topFields = [], $dataFields = [])
+	{
+		if ($this->is_admin && is_array($response)) {
+			return $response;
+		}
+		$result = ["status" => 200, "msg" => $message];
+		if (!is_array($response)) {
+			return $result;
+		}
+		foreach ($topFields as $field) {
+			if (array_key_exists($field, $response)) {
+				$result[$field] = $response[$field];
+			}
+		}
+		if (!empty($dataFields) && isset($response["data"]) && is_array($response["data"])) {
+			$result["data"] = [];
+			foreach ($dataFields as $field) {
+				if (array_key_exists($field, $response["data"])) {
+					$result["data"][$field] = $response["data"][$field];
+				}
+			}
+		}
+		return $result;
+	}
+	private function supplierVncSuccess($response, $message)
+	{
+		if (!is_array($response)) {
+			return null;
+		}
+		$data = isset($response["data"]) && is_array($response["data"]) ? $response["data"] : [];
+		$passwordFound = false;
+		$password = "";
+		foreach (["password", "pass", "vnc_pass"] as $field) {
+			if (array_key_exists($field, $data)) {
+				$password = (string) $data[$field];
+				$passwordFound = true;
+				break;
+			}
+			if (array_key_exists($field, $response)) {
+				$password = (string) $response[$field];
+				$passwordFound = true;
+				break;
+			}
+		}
+		$url = array_key_exists("url", $data) ? (string) $data["url"] : (array_key_exists("url", $response) ? (string) $response["url"] : "");
+		if (!$passwordFound || $url === "") {
+			return null;
+		}
+		$result = $this->is_admin ? $response : ["status" => 200, "msg" => $message];
+		$result["status"] = 200;
+		$result["msg"] = $message;
+		$result["data"] = ["password" => $password, "url" => $url];
+		if ($this->is_admin) {
+			$result["password"] = $password;
+			$result["pass"] = $password;
+			$result["url"] = $url;
+		}
+		return $result;
+	}
 	public function __construct($serverid = 0)
 	{
 		if (!empty($serverid)) {
@@ -362,7 +516,19 @@ class Dcim
 		if ($product["api_type"] == "zjmf_api") {
 			$params["id"] = $product["dcimid"];
 			$params["is_api"] = 1;
-			$result = zjmfCurl($product["zjmf_api_id"], "/dcim/traffic", $params);
+			$upstream = zjmfCurl($product["zjmf_api_id"], "/dcim/traffic", $params);
+			if (($upstream["status"] ?? 400) == 200) {
+				$result = $this->supplierSuccessForClient($upstream, "流量图获取成功", [], ["unit", "traffic"]);
+				$result["data"]["traffic"] = [];
+				foreach (($upstream["data"]["traffic"] ?? []) as $item) {
+					if (is_array($item)) {
+						$result["data"]["traffic"][] = ["time" => $item["time"] ?? 0, "value" => $item["value"] ?? 0, "type" => $item["type"] ?? ""];
+					}
+				}
+			} else {
+				$result = $this->supplierFailureForClient($upstream, $product["uid"], $id, "获取流量图", "流量图获取失败");
+				$result["data"] = ["support" => isset($upstream["data"]["support"]) ? (bool) $upstream["data"]["support"] : true];
+			}
 		} elseif ($product["api_type"] == "whmcs") {
 			$whmcs_post = ["switch_id" => $params["switch_id"], "port_name" => $params["port_name"], "start_time" => $params["start_time"], "end_time" => $params["end_time"]];
 			$res = whmcsCurlPost($id, "traffic", $whmcs_post);
@@ -643,7 +809,7 @@ class Dcim
 	}
 	public function novnc($id, $restart = false, $is_common = false)
 	{
-		$product = \think\Db::name("host")->alias("a")->field("a.serverid,a.dcimid,a.password,b.config_option1,b.api_type,b.zjmf_api_id,b.id as productid")->leftJoin("products b", "a.productid=b.id")->where("b.type", "dcim")->where("a.id", $id)->find();
+		$product = \think\Db::name("host")->alias("a")->field("a.serverid,a.dcimid,a.password,a.uid,b.config_option1,b.api_type,b.zjmf_api_id,b.id as productid")->leftJoin("products b", "a.productid=b.id")->where("b.type", "dcim")->where("a.id", $id)->find();
 		if (empty($product)) {
 			$result["status"] = 400;
 			$result["msg"] = lang("ID_ERROR");
@@ -661,27 +827,40 @@ class Dcim
 		if ($product["api_type"] == "zjmf_api") {
 			$post_data["id"] = $product["dcimid"];
 			$post_data["is_api"] = 1;
-			$result = zjmfCurl($product["zjmf_api_id"], "/dcim/novnc", $post_data);
+			$upstream = zjmfCurl($product["zjmf_api_id"], "/dcim/novnc", $post_data);
+			if (($upstream["status"] ?? 400) == 200) {
+				$result = $this->supplierVncSuccess($upstream, "vnc启动成功");
+				if ($result === null) {
+					$result = $this->supplierFailureForClient($upstream, $product["uid"], $id, "启动VNC", "vnc启动失败");
+				}
+			} else {
+				$result = $this->supplierFailureForClient($upstream, $product["uid"], $id, "启动VNC", "vnc启动失败");
+			}
 		} elseif ($product["api_type"] == "whmcs") {
-			$result = whmcsCurlPost($id, "vnc", [], 120);
-			if ($result["status"] == 200) {
-				$url = $result["host"];
-				if ($result["ssl"] == "on") {
+			$upstream = whmcsCurlPost($id, "vnc", [], 120);
+			if (($upstream["status"] ?? 400) == 200 && isset($upstream["host"], $upstream["ssl"], $upstream["house"], $upstream["token"], $upstream["vnc_pass"])) {
+				$url = $upstream["host"];
+				if ($upstream["ssl"] == "on") {
 					$link_url = "wss://" . $url;
 				} else {
 					$link_url = "ws://" . $url;
 				}
-				$link_url .= "/websockify_" . $result["house"] . "?token=" . $result["token"];
-				$result["password"] = $result["vnc_pass"];
-				if ($this->is_admin) {
-					$result["url"] = request()->domain() . "/" . config("database.admin_application") . "/dcim/novnc?url=" . urlencode(base64_encode($link_url)) . "&password=" . $result["vnc_pass"] . "&host_token=" . urlencode(aesPasswordEncode(cmf_decrypt($product["password"])));
+				$link_url .= "/websockify_" . $upstream["house"] . "?token=" . $upstream["token"];
+					$result = ["status" => 200, "msg" => "vnc启动成功"];
+					if ($this->is_admin) {
+						$vncUrl = request()->domain() . "/" . config("database.admin_application") . "/dcim/novnc?url=" . urlencode(base64_encode($link_url)) . "&password=" . $upstream["vnc_pass"] . "&host_token=" . urlencode(aesPasswordEncode(cmf_decrypt($product["password"])));
+					} else {
+						$vncUrl = request()->domain() . "/dcim/novnc?url=" . urlencode(base64_encode($link_url)) . "&password=" . $upstream["vnc_pass"] . "&host_token=" . urlencode(aesPasswordEncode(cmf_decrypt($product["password"])));
+					}
+					$normalized = $upstream;
+					$normalized["password"] = $upstream["vnc_pass"];
+					$normalized["url"] = $vncUrl;
+					$result = $this->supplierVncSuccess($normalized, "vnc启动成功");
+					if ($result === null) {
+						$result = $this->supplierFailureForClient($upstream, $product["uid"], $id, "启动VNC", "vnc启动失败");
+					}
 				} else {
-					$result["url"] = request()->domain() . "/dcim/novnc?url=" . urlencode(base64_encode($link_url)) . "&password=" . $result["vnc_pass"] . "&host_token=" . urlencode(aesPasswordEncode(cmf_decrypt($product["password"])));
-				}
-				$result["data"] = ["password" => $result["vnc_pass"], "url" => $result["url"]];
-			} else {
-				$result["status"] = 400;
-				$result["msg"] = $result["msg"] ?: "vnc启动失败";
+				$result = $this->supplierFailureForClient($upstream, $product["uid"], $id, "启动VNC", "vnc启动失败");
 			}
 		} else {
 			$this->setUrl($product["serverid"]);
@@ -726,10 +905,16 @@ class Dcim
 							$url = str_replace("http://", "ws://", $this->url);
 						}
 						$url .= "/websockify_" . $res["house_id"] . "?token=" . $res["token"];
+							$result["data"]["password"] = $res["pass"];
+							$result["data"]["url"] = urlencode(base64_encode($url));
+						}
+						$result["password"] = $res["pass"];
+						$result["pass"] = $res["pass"];
+						if (!isset($result["data"]["url"])) {
+							$result["data"]["url"] = $result["url"] ?? "";
+						}
 						$result["data"]["password"] = $res["pass"];
-						$result["data"]["url"] = urlencode(base64_encode($url));
-					}
-				} else {
+					} else {
 					$result["status"] = 400;
 					if ($this->is_admin) {
 						$result["msg"] = $res["msg"] ?: "novnc启动失败";
@@ -772,6 +957,9 @@ class Dcim
 					} else {
 						$result["url"] = request()->domain() . "/dcim/novnc?url=" . urlencode(base64_encode($link_url)) . "&password=" . $res["vnc_pass"] . "&host_token=" . urlencode(aesPasswordEncode(cmf_decrypt($product["password"])));
 					}
+					$result["password"] = $res["vnc_pass"] ?? "";
+					$result["pass"] = $result["password"];
+					$result["data"] = ["password" => $result["password"], "url" => $result["url"]];
 				} else {
 					$result["status"] = 400;
 					$result["msg"] = $res["msg"] ?: "vnc启动失败";
@@ -982,11 +1170,12 @@ class Dcim
 			$post_data["id"] = $product["dcimid"];
 			$post_data["os"] = $r["upstream_id"];
 			$post_data["is_api"] = 1;
-			$result = zjmfCurl($product["zjmf_api_id"], "/dcim/reinstall", $post_data);
-			if ($result["status"] == 400 && isset($result["price"]) && $product["upstream_price_type"] == "percent") {
-				$result["price"] = round($result["price"] * $product["upstream_price_value"] / 100, 2);
+			$upstream = zjmfCurl($product["zjmf_api_id"], "/dcim/reinstall", $post_data);
+			if (($upstream["status"] ?? 400) == 400 && isset($upstream["price"]) && $product["upstream_price_type"] == "percent") {
+				$upstream["price"] = round($upstream["price"] * $product["upstream_price_value"] / 100, 2);
 			}
-			if ($result["status"] == 200) {
+			if (($upstream["status"] ?? 400) == 200) {
+				$result = $this->supplierSuccessForClient($upstream, "重装系统发起成功");
 				$description = sprintf("重装系统为" . $os_name . "发起成功 - Host ID:%d", $id);
 				$old = \think\Db::name("host_config_options")->where("relid", $id)->where("configid", $r["config_id"])->find();
 				if (!empty($old)) {
@@ -999,22 +1188,25 @@ class Dcim
 				if ($product["os_name"] != $os_name) {
 					pushHostInfo($id);
 				}
-			} else {
-				if ($result["status"] == 400 && !$result["confirm"] && !isset($result["price"])) {
-					if ($this->is_admin) {
-						$result["msg"] = $this->log_prefix_error . $result["msg"];
-						$description = $this->log_prefix_error . sprintf("重装系统发起失败,原因:%s - Host ID:%d", $result["msg"], $id);
-					} else {
-						$result["msg"] = "重装系统发起失败";
-						$description = sprintf("重装系统发起失败 - Host ID:%d", $id);
-					}
+			} elseif (isset($upstream["price"]) || !empty($upstream["confirm"])) {
+				$result = ["status" => 400, "msg" => isset($upstream["price"]) ? "本周重装次数已达上限，可购买重装次数" : "请确认重装操作"];
+				if (array_key_exists("confirm", $upstream)) {
+					$result["confirm"] = (bool) $upstream["confirm"];
 				}
+				if (isset($upstream["price"])) {
+					$result["price"] = $upstream["price"];
+				}
+			} else {
+				$result = $this->supplierFailureForClient($upstream, $product["uid"], $id, "发起重装系统", "重装系统发起失败", ["confirm"]);
 			}
 		} elseif ($product["api_type"] == "whmcs") {
-			$result = whmcsCurlPost($id, "reinstall", ["os_id" => $params["mos"], "dcim" => ["password" => $params["rootpass"], "port" => $params["port"], "part_type" => $params["part_type"]]], 120);
-			if ($result["status"] == 200) {
+			$upstream = whmcsCurlPost($id, "reinstall", ["os_id" => $params["mos"], "dcim" => ["password" => $params["rootpass"], "port" => $params["port"], "part_type" => $params["part_type"]]], 120);
+			if (($upstream["status"] ?? 400) == 200) {
+				$result = $this->supplierSuccessForClient($upstream, "重装系统发起成功");
 				$host_logic = new Host();
 				$host_logic->sync($id);
+			} else {
+				$result = $this->supplierFailureForClient($upstream, $product["uid"], $id, "发起重装系统", "重装系统发起失败");
 			}
 		} else {
 			$this->setUrl($product["serverid"]);
@@ -1201,13 +1393,16 @@ class Dcim
 				return $result;
 			}
 		}
-		$task_type = $res["task_type"];
 		$des = ["重装系统", "救援系统", "重置密码", "获取硬件信息"];
-		$description = sprintf("取消%s成功 - Host ID:%d", $des[$task_type], $id);
-		if ($res["status"] == "success") {
+		$task_type = isset($res["task_type"]) && isset($des[intval($res["task_type"])]) ? intval($res["task_type"]) : null;
+		$task_name = $task_type === null ? "任务" : $des[$task_type];
+		if (($res["status"] ?? null) == "success") {
 			$result["status"] = 200;
 			$result["msg"] = "取消成功";
-			$result["task_type"] = $res["task_type"];
+			if ($task_type !== null) {
+				$result["task_type"] = $task_type;
+			}
+			$description = sprintf("取消%s成功 - Host ID:%d", $task_name, $id);
 			if (!$this->is_admin && $product["reinstall_times"] > 0) {
 				$reinstall_info = json_decode($product["reinstall_info"], true);
 				$reinstall_info["num"] -= 1;
@@ -1221,21 +1416,19 @@ class Dcim
 				}
 				\think\Db::name("host")->where("id", $id)->update($update);
 			}
-		} elseif ($res["status"] == 200) {
+		} elseif (($res["status"] ?? 400) == 200) {
 			$result["status"] = 200;
 			$result["msg"] = "取消成功";
-			$result["task_type"] = $res["task_type"];
-		} else {
-			$result["status"] = 400;
-			$result["msg"] = $res["msg"];
-			if ($this->is_admin) {
-				$result["msg"] = $this->log_prefix_error . $result["msg"];
-				$description = $this->log_prefix_error . sprintf("取消%s失败,原因:%s - Host ID:%d", $des[$task_type], $res["msg"], $id);
-			} else {
-				$description = sprintf("取消%s失败 - Host ID:%d", $des[$task_type], $id);
+			if ($task_type !== null) {
+				$result["task_type"] = $task_type;
 			}
+			$description = sprintf("取消%s成功 - Host ID:%d", $task_name, $id);
+		} else {
+			$result = $this->supplierFailureForClient($res, $product["uid"], $id, "取消" . $task_name, "取消失败");
 		}
-		active_log_final($description, $product["uid"], 2, $id);
+		if (!empty($description)) {
+			active_log_final($description, $product["uid"], 2, $id);
+		}
 		return $result;
 	}
 	public function reinstallStatus($id)
@@ -1254,7 +1447,36 @@ class Dcim
 		if ($product["api_type"] == "zjmf_api") {
 			$post_data["id"] = $product["dcimid"];
 			$post_data["is_api"] = 1;
-			$result = zjmfCurl($product["zjmf_api_id"], "/dcim/resintall_status", $post_data, 30, "GET");
+			$upstream = zjmfCurl($product["zjmf_api_id"], "/dcim/resintall_status", $post_data, 30, "GET");
+			if (($upstream["status"] ?? 400) == 200) {
+				$result = $this->supplierSuccessForClient($upstream, "获取状态成功", [], ["disk_check", "crackPwd", "error_type", "error_msg", "disk_info", "progress", "windows_finish", "hostid", "task_type", "reinstall_msg", "step", "last_result"]);
+				if (!$this->is_admin) {
+					if (!isset($result["data"]) || !is_array($result["data"])) {
+						$result["data"] = [];
+					}
+					if (isset($upstream["crackPwd"]) && !isset($result["data"]["crackPwd"])) {
+						$result["data"]["crackPwd"] = $upstream["crackPwd"];
+					}
+					if (!empty($result["data"]["error_msg"])) {
+						$this->recordSupplierDiagnostic($upstream, $product["uid"], $id, "重装任务执行");
+						$result["data"]["error_msg"] = "任务执行失败，请稍后重试或联系管理员";
+					}
+					if (array_key_exists("reinstall_msg", $result["data"])) {
+						$result["data"]["reinstall_msg"] = $result["data"]["reinstall_msg"] === "" ? "" : "重装任务执行中";
+					}
+					if (array_key_exists("step", $result["data"])) {
+						$result["data"]["step"] = $result["data"]["step"] === "" ? "" : "任务执行中";
+					}
+					if (isset($result["data"]["last_result"]) && is_array($result["data"]["last_result"])) {
+						$lastStatus = intval($result["data"]["last_result"]["status"] ?? 0);
+						$allowedActs = ["重装系统", "救援系统", "重置密码", "获取硬件信息"];
+						$lastAct = in_array($result["data"]["last_result"]["act"] ?? "", $allowedActs, true) ? $result["data"]["last_result"]["act"] : "任务";
+						$result["data"]["last_result"] = ["act" => $lastAct, "status" => $lastStatus, "msg" => $lastStatus === 1 ? "成功" : "失败"];
+					}
+				}
+			} else {
+				$result = $this->supplierFailureForClient($upstream, $product["uid"], $id, "获取重装状态", "获取状态失败");
+			}
 		} else {
 			$this->setUrl($product["serverid"]);
 			if ($this->error) {
@@ -1331,8 +1553,7 @@ class Dcim
 						}
 					}
 				} else {
-					$result["status"] = 400;
-					$result["msg"] = $res["msg"];
+					$result = $this->supplierFailureForClient($res, $product["uid"], $id, "获取重装状态", "获取状态失败");
 				}
 			} else {
 				$result["status"] = 400;
@@ -1344,7 +1565,7 @@ class Dcim
 	public function detail($id)
 	{
 		$product = \think\Db::name("host")->alias("a")->field("a.serverid,a.dcimid,a.uid,b.config_option1,b.api_type,b.zjmf_api_id,b.id productid")->leftJoin("products b", "a.productid=b.id")->where("b.type", "dcim")->where("a.id", $id)->find();
-		if ($product["api_type"] == "whmcs") {
+		if (!empty($product) && $product["api_type"] == "whmcs") {
 			$dcimid = \think\Db::name("customfieldsvalues")->alias("a")->leftJoin("customfields b", "a.fieldid=b.id")->where("a.relid", $id)->where("b.type", "product")->where("b.relid", $product["productid"])->where("b.fieldname", "hostid")->value("value");
 			$product["dcimid"] = $dcimid;
 		}
@@ -1356,7 +1577,17 @@ class Dcim
 		if ($product["api_type"] == "zjmf_api") {
 			$post_data["id"] = $product["dcimid"];
 			$post_data["is_api"] = 1;
-			$result = zjmfCurl($product["zjmf_api_id"], "/dcim/detail", $post_data, 30, "GET");
+			$upstream = zjmfCurl($product["zjmf_api_id"], "/dcim/detail", $post_data, 30, "GET");
+			if (($upstream["status"] ?? 400) == 200) {
+				$result = ["status" => 200, "msg" => "请求成功", "data" => ["switch" => []]];
+				foreach (($upstream["data"]["switch"] ?? []) as $switch) {
+					if (is_array($switch)) {
+						$result["data"]["switch"][] = ["switch_id" => $switch["switch_id"] ?? ($switch["id"] ?? 0), "name" => $switch["name"] ?? ($switch["switch_num_name"] ?? "")];
+					}
+				}
+			} else {
+				$result = $this->supplierFailureForClient($upstream, $product["uid"], $id, "获取设备详情", "获取失败");
+			}
 		} elseif ($product["api_type"] == "whmcs") {
 			$up_id = \think\Db::name("customfieldsvalues")->alias("a")->leftJoin("customfields b", "a.fieldid=b.id")->where("a.relid", $id)->where("b.type", "product")->where("b.relid", $product["productid"])->where("b.fieldname", "hostid")->value("value");
 			$api = \think\Db::name("zjmf_finance_api")->where("id", $product["zjmf_api_id"])->find();
@@ -1560,7 +1791,46 @@ class Dcim
 			return $result;
 		}
 		if ($product["api_type"] == "zjmf_api") {
-			$result = zjmfCurl($product["zjmf_api_id"], "/dcim/refresh_power_status", ["id" => $product["dcimid"], "is_api" => 1]);
+			$upstream = zjmfCurl($product["zjmf_api_id"], "/dcim/refresh_power_status", ["id" => $product["dcimid"], "is_api" => 1]);
+			if (($upstream["status"] ?? 400) == 200) {
+				$result = $this->supplierSuccessForClient($upstream, "获取电源状态成功", [], ["power", "msg", "status", "des"]);
+				if (!$this->is_admin) {
+					if (!isset($result["data"]) || !is_array($result["data"])) {
+						$result["data"] = [];
+					}
+					$power = (string) ($result["data"]["power"] ?? ($result["data"]["status"] ?? "unknown"));
+					if ($power === "wait_reboot") {
+						$power = "waiting";
+					} elseif ($power === "task") {
+						$power = "process";
+					} elseif ($power === "nonsupport") {
+						$power = "not_support";
+					}
+					$powerMap = ["on" => "开机", "off" => "关机", "suspend" => "暂停", "waiting" => "等待重启", "process" => "任务处理中", "paused" => "挂起", "not_support" => "不支持电源控制", "error" => "未知", "unknown" => "未知"];
+					if (!isset($powerMap[$power])) {
+						$power = "unknown";
+					}
+					if (array_key_exists("power", $result["data"])) {
+						$result["data"]["power"] = $power;
+						$result["data"]["msg"] = $powerMap[$power];
+					}
+					if (array_key_exists("msg", $result["data"])) {
+						$result["data"]["msg"] = $powerMap[$power];
+					}
+					if (array_key_exists("status", $result["data"])) {
+						$result["data"]["status"] = $power;
+						$result["data"]["des"] = $powerMap[$power];
+					}
+					if (array_key_exists("des", $result["data"])) {
+						$result["data"]["des"] = $powerMap[$power];
+					}
+					if (in_array($power, ["error", "unknown"], true)) {
+						$this->recordSupplierDiagnostic($upstream, $product["uid"], $id, "获取电源状态");
+					}
+				}
+			} else {
+				$result = $this->supplierFailureForClient($upstream, $product["uid"], $id, "获取电源状态", "获取电源状态失败");
+			}
 		} elseif ($product["api_type"] == "whmcs") {
 			$res = whmcsCurlPost($id, "status", ["type" => "host"]);
 			if ($res["status"] == 200) {
@@ -1579,7 +1849,7 @@ class Dcim
 					$result["data"]["des"] = "等待重启";
 				} elseif ($res["power"] == "task") {
 					$result["data"]["status"] = "process";
-					$result["data"]["des"] = $res["task_name"] . "中";
+					$result["data"]["des"] = $this->is_admin && !empty($res["task_name"]) ? $res["task_name"] . "中" : "任务处理中";
 				} elseif ($res["power"] == "paused") {
 					$result["data"]["status"] = "paused";
 					$result["data"]["des"] = "挂起";
@@ -1651,7 +1921,7 @@ class Dcim
 						$result["data"]["des"] = "等待重启";
 					} elseif ($res["status"] == "task") {
 						$result["data"]["status"] = "process";
-						$result["data"]["des"] = $res["task_name"] . "中";
+						$result["data"]["des"] = $this->is_admin && !empty($res["task_name"]) ? $res["task_name"] . "中" : "任务处理中";
 					} elseif ($res["status"] == "paused") {
 						$result["data"]["status"] = "paused";
 						$result["data"]["des"] = "挂起";
@@ -1679,7 +1949,7 @@ class Dcim
 	}
 	public function getTrafficUsage($id, $start, $end)
 	{
-		$product = \think\Db::name("host")->alias("a")->field("a.serverid,a.dcimid,b.config_option1,b.api_type,b.zjmf_api_id,b.id productid")->leftJoin("products b", "a.productid=b.id")->where("b.type", "dcim")->where("a.id", $id)->find();
+		$product = \think\Db::name("host")->alias("a")->field("a.serverid,a.dcimid,a.uid,b.config_option1,b.api_type,b.zjmf_api_id,b.id productid")->leftJoin("products b", "a.productid=b.id")->where("b.type", "dcim")->where("a.id", $id)->find();
 		if (empty($product)) {
 			$result["status"] = 400;
 			$result["msg"] = lang("ID_ERROR");
@@ -1695,7 +1965,17 @@ class Dcim
 			$post_data["start"] = $start;
 			$post_data["end"] = $end;
 			$post_data["is_api"] = 1;
-			$result = zjmfCurl($product["zjmf_api_id"], "/dcim/traffic_usage", $post_data, 30, "GET");
+			$upstream = zjmfCurl($product["zjmf_api_id"], "/dcim/traffic_usage", $post_data, 30, "GET");
+			if (($upstream["status"] ?? 400) == 200) {
+				$result = ["status" => 200, "msg" => "获取用量信息成功", "data" => []];
+				foreach (($upstream["data"] ?? []) as $item) {
+					if (is_array($item)) {
+						$result["data"][] = ["time" => $item["time"] ?? "", "value" => $item["value"] ?? 0];
+					}
+				}
+			} else {
+				$result = $this->supplierFailureForClient($upstream, $product["uid"], $id, "获取用量信息", "获取用量信息失败");
+			}
 		} else {
 			$this->setUrl($product["serverid"]);
 			if ($this->error) {
@@ -1725,8 +2005,7 @@ class Dcim
 					$result["status"] = 200;
 					$result["data"] = $data;
 				} else {
-					$result["status"] = 400;
-					$result["msg"] = $res["msg"];
+					$result = $this->supplierFailureForClient($res, $product["uid"], $id, "获取用量信息", "获取用量信息失败");
 				}
 			} elseif ($product["config_option1"] == "bms") {
 				$result["status"] = 400;

@@ -105,7 +105,16 @@ class CartController extends CommonController
 	public function postCreateProducts()
 	{
 		$param = $this->request->param();
-		\think\Db::startTrans();
+		$token = $param["token"] ?? null;
+		$resourceToken = cache("resource_token");
+		if (!is_string($token) || $token === "" || !is_string($resourceToken) || $resourceToken === "" || !hash_equals($resourceToken, $token)) {
+			return jsons(["status" => 403, "msg" => "商品导入凭证无效"]);
+		}
+		$resource = \think\Db::name("zjmf_finance_api")->where("is_resource", 1)->where("is_using", 1)->order("id", "desc")->find();
+		if (empty($resource)) {
+			return jsons(["status" => 403, "msg" => "资源池未启用"]);
+		}
+			\think\Db::startTrans();
 		try {
 			$percent_value = $param["percent_value"];
 			$supplier_currency = $param["currency"];
@@ -118,7 +127,6 @@ class CartController extends CommonController
 			}
 			$product = $param["product"];
 			$product_groups_id = $param["product_groups_id"];
-			$token = $param["token"];
 			$pid = $product["id"];
 			unset($product["id"]);
 			unset($product["gid"]);
@@ -139,7 +147,6 @@ class CartController extends CommonController
 			$upstream_pid = $product["upstream_pid"];
 			$upstream_price_type = $product["upstream_price_type"];
 			$upstream_price_value = $product["upstream_price_value"];
-			$resource = \think\Db::name("zjmf_finance_api")->where("is_resource", 1)->where("is_using", 1)->order("id", "desc")->find();
 			$resource_id = $resource["id"];
 			if (!empty($product_groups_id)) {
 				$gexist = \think\Db::name("product_groups")->where("id", $product_groups_id)->find();
@@ -334,6 +341,7 @@ class CartController extends CommonController
 			\think\Db::rollback();
 			return jsons(["status" => 400, "msg" => "代理失败:" . $e->getMessage()]);
 		}
+		(new \app\common\logic\Product())->invalidateCacheOrMarkDirty([$id], "resource product import");
 		return jsons(["status" => 200, "msg" => "代理成功", "rate" => $rate]);
 	}
 	public function getCredit()
@@ -572,10 +580,7 @@ class CartController extends CommonController
 			$oids_all = array_merge($oids_all, array_column($options, "id"));
 			$config_groups[$k]["options"] = $options;
 		}
-		$advanced = \think\Db::name("product_config_options_links")->whereIn("config_id", array_unique($oids_all))->order("id", "asc")->select()->toArray();
-		foreach ($advanced as &$advance) {
-			$advance["sub_id"] = json_decode($advance["sub_id"], true);
-		}
+		$advanced = (new \app\common\model\SeniorConfModel())->getProductUseConfLinksFlatMap(array_unique($oids_all));
 		$data["advanced"] = $advanced;
 		$data["config_groups"] = $config_groups;
 		$data["config_links"] = array_column($config_links_data, "gid");
@@ -1234,17 +1239,7 @@ class CartController extends CommonController
 			})->where("a.uid", $uid)->select()->toArray();
 		}
 		$cids = \think\Db::name("product_config_options")->alias("a")->field("a.id")->leftJoin("product_config_links b", "b.gid = a.gid")->leftJoin("product_config_groups c", "a.gid = c.id")->where("b.pid", $pid)->order("a.order", "asc")->order("a.id", "asc")->column("a.id");
-		$links = \think\Db::name("product_config_options_links")->whereIN("config_id", $cids)->where("type", "condition")->where("relation_id", 0)->withAttr("sub_id", function ($value) {
-			return json_decode($value, true);
-		})->select()->toArray();
-		if (!empty($links[0])) {
-			foreach ($links as &$link) {
-				$result = \think\Db::name("product_config_options_links")->where("relation_id", $link["id"])->withAttr("sub_id", function ($value) {
-					return json_decode($value, true);
-				})->select()->toArray();
-				$link["result"] = $result;
-			}
-		}
+		$links = (new \app\common\model\SeniorConfModel())->getProductUseConfLinksDetailMap($cids);
 		return jsons(["status" => 200, "msg" => lang("SUCCESS MESSAGE"), "servers" => $serversfilter, "currency" => $currency, "dafault_currencyid" => $currencyid, "product" => $product, "option" => $alloption, "custom_fields" => $fields, "allow_qty" => $allow_qty, "developer_app" => !empty($developer_app) ? 1 : 0, "hosts" => $hosts ?? [], "links" => $links ?? []]);
 	}
 	public function getLinkAgeListJson()
@@ -2536,11 +2531,12 @@ class CartController extends CommonController
 		$create_after_order = [];
 		$create_after_pay = [];
 		$all_host = [];
-		if (request()->is_api == 1) {
-			$downstream_data = input("post.");
-			$is_downstream = (strpos($downstream_data["downstream_url"], "https://") === 0 || strpos($downstream_data["downstream_url"], "http://") === 0) && strlen($downstream_data["downstream_token"]) == 32 && is_numeric($downstream_data["downstream_id"]);
-		}
-		\think\Db::startTrans();
+			if (request()->is_api == 1) {
+				$downstream_data = input("post.");
+				$is_downstream = (strpos($downstream_data["downstream_url"], "https://") === 0 || strpos($downstream_data["downstream_url"], "http://") === 0) && strlen($downstream_data["downstream_token"]) == 32 && is_numeric($downstream_data["downstream_id"]);
+			}
+			$inventory_product_ids = [];
+			\think\Db::startTrans();
 		try {
 			if (!empty($create_invoice)) {
 				$invoiceid = \think\Db::name("invoices")->insertGetId($invoices_data);
@@ -2638,7 +2634,10 @@ class CartController extends CommonController
 						\think\Db::name("customfieldsvalues")->insertAll($customfields);
 					}
 				}
-				\think\Db::name("products")->where("id", $v["productid"])->where("stock_control", 1)->setDec("qty", $qtys);
+					\think\Db::name("products")->where("id", $v["productid"])->where("stock_control", 1)->setDec("qty", $qtys);
+					if ($r["stock_control"] == 1) {
+						$inventory_product_ids[] = intval($v["productid"]);
+					}
 			}
 			\think\Db::name("cart_session")->where("uid", $uid)->update(["cart_data" => $new_cart_data, "update_time" => time()]);
 			if (!empty($promo)) {
@@ -2698,9 +2697,12 @@ class CartController extends CommonController
 			$result["msg"] = $e->getMessage();
 			\think\Db::rollback();
 		}
-		if ($result["status"] != 200) {
-			return jsons($result);
-		}
+			if ($result["status"] != 200) {
+				return jsons($result);
+			}
+			if (!empty($inventory_product_ids)) {
+				(new \app\common\logic\Product())->refreshInventoryCache($inventory_product_ids, "home cart order commit");
+			}
 		$curl_multi_data = [];
 		if ($subtotal != 0) {
 			foreach ($hids as $h) {
@@ -2899,9 +2901,10 @@ class CartController extends CommonController
 					if (empty($upstream_data["product"])) {
 						return jsons(["status" => 400, "msg" => "商品缺货"]);
 					}
-					if ($upstream_data["product"]["hidden"] == 1) {
-						\think\Db::name("products")->where("id", $pid)->update(["hidden" => 1]);
-						return jsons(["status" => 400, "msg" => "商品不存在"]);
+						if ($upstream_data["product"]["hidden"] == 1) {
+							\think\Db::name("products")->where("id", $pid)->update(["hidden" => 1]);
+							(new \app\common\logic\Product())->invalidateCacheOrMarkDirty([$pid], "upstream product hidden in home cart");
+							return jsons(["status" => 400, "msg" => "商品不存在"]);
 					}
 					if ($upstream_data["product"]["stock_control"] && $upstream_data["product"]["qty"] <= 0) {
 						return jsons(["status" => 400, "msg" => lang("CART_SETTLE_PRO_STOCK_CONTROL", [$product["name"]])]);
@@ -3014,17 +3017,7 @@ class CartController extends CommonController
 			})->where("a.uid", $uid)->select()->toArray();
 		}
 		$cids = \think\Db::name("product_config_options")->alias("a")->field("a.id")->leftJoin("product_config_links b", "b.gid = a.gid")->leftJoin("product_config_groups c", "a.gid = c.id")->where("b.pid", $pid)->order("a.order", "asc")->order("a.id", "asc")->column("a.id");
-		$links = \think\Db::name("product_config_options_links")->whereIN("config_id", $cids)->where("type", "condition")->where("relation_id", 0)->withAttr("sub_id", function ($value) {
-			return json_decode($value, true);
-		})->select()->toArray();
-		if (!empty($links[0])) {
-			foreach ($links as &$link) {
-				$result = \think\Db::name("product_config_options_links")->where("relation_id", $link["id"])->withAttr("sub_id", function ($value) {
-					return json_decode($value, true);
-				})->select()->toArray();
-				$link["result"] = $result;
-			}
-		}
+		$links = (new \app\common\model\SeniorConfModel())->getProductUseConfLinksDetailMap($cids);
 		return jsons(["status" => 200, "msg" => lang("SUCCESS MESSAGE"), "servers" => $serversfilter, "currency" => $currency, "dafault_currencyid" => $currencyid, "product" => $product, "option" => $alloption, "custom_fields" => $fields, "config_options" => $cart_data["configoptions"], "custom_fields_value" => $cart_data["customfield"] ?? [], "billingcyle" => $billingcycle, "host" => $cart_data["host"] ?? "", "password" => $cart_data["password"] ?? "", "qty" => $cart_data["qty"], "hostid" => $cart_data["hostid"], "hosts" => $hosts ?? [], "links" => $links ?? [], "developer_app" => !empty($developer_app) ? 1 : 0]);
 	}
 	/**

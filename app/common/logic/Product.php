@@ -7,6 +7,7 @@ class Product
 	private $list_name = "shd_all_products_list";
 	private $detail_name = "shd_all_products_detail_";
 	private $info_name = "shd_all_products_info";
+	private $cache_dirty_setting = "_product_catalog_cache_dirty";
 	public $concurrent = 500;
 	public $cron_max = 10;
 	public function getProducts($pids = [])
@@ -38,10 +39,7 @@ class Product
 				$oids_all = array_merge($oids_all, array_column($options, "id"));
 				$config_groups[$k]["options"] = $options;
 			}
-			$advanced = \think\Db::name("product_config_options_links")->whereIn("config_id", array_unique($oids_all))->order("id", "asc")->select()->toArray();
-			foreach ($advanced as &$advance) {
-				$advance["sub_id"] = json_decode($advance["sub_id"], true);
-			}
+			$advanced = (new \app\common\model\SeniorConfModel())->getProductUseConfLinksFlatMap(array_unique($oids_all));
 			$product["customfields"] = $fields;
 			$product["product_pricings"] = $product_pricings;
 			$product["advanced"] = $advanced;
@@ -53,23 +51,56 @@ class Product
 	}
 	public function updateDetailCache($pids = [])
 	{
+		$lock = $this->acquireCatalogCacheLock();
+		if ($lock === false) {
+			$this->markCatalogCacheDirty("detail cache rebuild", "无法取得商品缓存构建锁");
+			return false;
+		}
+		try {
+			$result = $this->updateDetailCacheUnlocked($pids);
+			if ($result !== true) {
+				$this->markCatalogCacheDirty("detail cache rebuild", "商品详情缓存写入失败");
+			}
+			return $result;
+		} finally {
+			$this->releaseFileLock($lock);
+		}
+	}
+	private function updateDetailCacheUnlocked($pids = [])
+	{
 		if (!is_array($pids)) {
 			$pids = [$pids];
 		}
 		foreach ($pids as $pid) {
 			$tmp = $this->getProducts([$pid]);
-			cache($this->detail_name . $pid, json_encode($tmp));
+			if (cache($this->detail_name . $pid, json_encode($tmp)) === false) {
+				return false;
+			}
 			unset($tmp);
 		}
 		return true;
 	}
 	public function deleteDetailCache($pids = [])
 	{
+		$lock = $this->acquireCatalogCacheLock();
+		if ($lock === false) {
+			return false;
+		}
+		try {
+			return $this->deleteDetailCacheUnlocked($pids);
+		} finally {
+			$this->releaseFileLock($lock);
+		}
+	}
+	private function deleteDetailCacheUnlocked($pids = [])
+	{
 		if (!is_array($pids)) {
 			$pids = [$pids];
 		}
 		foreach ($pids as $pid) {
-			cache($this->detail_name . $pid, null);
+			if (!$this->deleteCacheKey($this->detail_name . $pid)) {
+				return false;
+			}
 		}
 		return true;
 	}
@@ -80,8 +111,27 @@ class Product
 	}
 	public function updateInfoCache()
 	{
+		$lock = $this->acquireCatalogCacheLock();
+		if ($lock === false) {
+			$this->markCatalogCacheDirty("info cache rebuild", "无法取得商品缓存构建锁");
+			return false;
+		}
+		try {
+			$result = $this->updateInfoCacheUnlocked();
+			if ($result !== true) {
+				$this->markCatalogCacheDirty("info cache rebuild", "商品信息缓存写入失败");
+			}
+			return $result;
+		} finally {
+			$this->releaseFileLock($lock);
+		}
+	}
+	private function updateInfoCacheUnlocked()
+	{
 		$infos = \think\Db::name("products")->field("id,name,location_version,stock_control,qty")->select()->toArray();
-		cache($this->info_name, json_encode($infos));
+		if (cache($this->info_name, json_encode($infos)) === false) {
+			return false;
+		}
 		unset($infos);
 		return true;
 	}
@@ -92,19 +142,218 @@ class Product
 	}
 	public function deleteInfoCache()
 	{
-		cache($this->info_name, null);
-		return true;
+		$lock = $this->acquireCatalogCacheLock();
+		if ($lock === false) {
+			return false;
+		}
+		try {
+			return $this->deleteInfoCacheUnlocked();
+		} finally {
+			$this->releaseFileLock($lock);
+		}
+	}
+	private function deleteInfoCacheUnlocked()
+	{
+		return $this->deleteCacheKey($this->info_name);
 	}
 	public function updateCache($pids = [])
+	{
+		$pids = $this->normalizeProductIds($pids);
+		$lock = $this->acquireCatalogCacheLock();
+		if ($lock === false) {
+			$this->markCatalogCacheDirty("catalog cache rebuild", "无法取得商品缓存构建锁");
+			return false;
+		}
+		try {
+			if (!$this->updateInfoCacheUnlocked()) {
+				throw new \RuntimeException("商品信息缓存写入失败");
+			}
+			if (!$this->updateDetailCacheUnlocked($pids)) {
+				throw new \RuntimeException("商品详情缓存写入失败");
+			}
+			if (!$this->updateListCacheUnlocked([], true)) {
+				throw new \RuntimeException("商品列表缓存写入失败");
+			}
+			if (clearCartIndexResponseCache() !== true) {
+				throw new \RuntimeException("购物车响应缓存版本写入失败");
+			}
+			return true;
+		} catch (\Throwable $e) {
+			$invalidateError = "";
+			if ($this->invalidateCacheUnlocked($pids) !== true) {
+				$invalidateError = ",失败后缓存清理未完成";
+			}
+			$this->markCatalogCacheDirty("catalog cache rebuild", $e->getMessage() . $invalidateError);
+			return false;
+		} finally {
+			$this->releaseFileLock($lock);
+		}
+	}
+	public function invalidateCache($pids = [])
+	{
+		$pids = $this->normalizeProductIds($pids);
+		$lock = $this->acquireCatalogCacheLock();
+		if ($lock === false) {
+			return false;
+		}
+		try {
+			return $this->invalidateCacheUnlocked($pids);
+		} finally {
+			$this->releaseFileLock($lock);
+		}
+	}
+	public function invalidateCacheOrMarkDirty($pids = [], $context = "")
+	{
+		try {
+			if ($this->invalidateCache($pids) === true) {
+				return true;
+			}
+			$error = "无法取得商品缓存失效锁";
+		} catch (\Throwable $e) {
+			$error = $e->getMessage();
+		}
+		$this->markCatalogCacheDirty($context, $error);
+		return false;
+	}
+	private function markCatalogCacheDirty($context, $error)
+	{
+		if (!class_exists("\\think\\Db")) {
+			error_log("Product catalog cache is dirty: " . $context . " - " . $error);
+			return false;
+		}
+		try {
+			try {
+				$generation = bin2hex(random_bytes(16));
+			} catch (\Throwable $e) {
+				$generation = sha1(uniqid((string) mt_rand(), true));
+			}
+			$now = time();
+			\think\Db::startTrans();
+			try {
+				$row = \think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->lock(true)->find();
+				if (!empty($row)) {
+					\think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->update(["value" => $generation, "update_time" => $now]);
+				} else {
+					\think\Db::name("configuration")->insert(["setting" => $this->cache_dirty_setting, "value" => $generation, "create_time" => $now, "update_time" => $now]);
+				}
+				\think\Db::commit();
+			} catch (\Throwable $e) {
+				\think\Db::rollback();
+				throw $e;
+			}
+			error_log("Product catalog cache invalidation queued: " . $context . " - " . $error);
+			return true;
+		} catch (\Throwable $e) {
+			error_log("Failed to persist product catalog cache retry: " . $e->getMessage());
+			return false;
+		}
+	}
+	public function retryDirtyCacheInvalidation()
+	{
+		if (!class_exists("\\think\\Db")) {
+			return false;
+		}
+		try {
+			$generation = (string) \think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->value("value");
+			if ($generation === "" || $generation === "0") {
+				return true;
+			}
+			$pids = \think\Db::name("products")->column("id");
+			if ($this->invalidateCache($pids ?: []) !== true) {
+				return false;
+			}
+			$cleared = \think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->where("value", $generation)->update(["value" => 0, "update_time" => time()]);
+			return $cleared > 0;
+		} catch (\Throwable $e) {
+			error_log("Failed to retry product catalog cache invalidation: " . $e->getMessage());
+			return false;
+		}
+	}
+	private function invalidateCacheUnlocked($pids = [])
+	{
+		if (!$this->deleteInfoCacheUnlocked() || !$this->deleteListCacheUnlocked()) {
+			return false;
+		}
+		if (!empty($pids) && !$this->deleteDetailCacheUnlocked($pids)) {
+			return false;
+		}
+		return clearCartIndexResponseCache() === true;
+	}
+	private function deleteCacheKey($key)
+	{
+		return !cache("?" . $key) || cache($key, null) === true;
+	}
+	public function refreshInventoryCache($pids = [], $context = "inventory commit")
+	{
+		$pids = $this->normalizeProductIds($pids);
+		if (empty($pids)) {
+			return true;
+		}
+		$lock = $this->acquireCatalogCacheLock(true);
+		if ($lock === false) {
+			$this->markCatalogCacheDirty($context, "无法取得商品缓存刷新锁");
+			return false;
+		}
+		try {
+			$rows = \think\Db::name("products")->field("id,stock_control,qty")->whereIn("id", $pids)->select()->toArray();
+			$inventory = [];
+			foreach ($rows as $row) {
+				$inventory[intval($row["id"])] = ["stock_control" => intval($row["stock_control"]), "qty" => intval($row["qty"])];
+			}
+			$infos = $this->getInfoCache();
+			if (is_array($infos) && !empty($infos)) {
+				foreach ($infos as &$info) {
+					$id = intval($info["id"] ?? 0);
+					if (isset($inventory[$id])) {
+						$info = array_merge($info, $inventory[$id]);
+					}
+				}
+				unset($info);
+				if (cache($this->info_name, json_encode($infos)) === false) {
+					throw new \RuntimeException("商品信息缓存写入失败");
+				}
+			}
+			$list = $this->getListCache();
+			if (is_array($list) && !empty($list)) {
+				foreach ($inventory as $id => $values) {
+					if (isset($list[$id])) {
+						$list[$id] = array_merge($list[$id], $values);
+					}
+				}
+				if (cache($this->list_name, json_encode($list)) === false) {
+					throw new \RuntimeException("商品列表缓存写入失败");
+				}
+			}
+			foreach ($inventory as $id => $values) {
+				$detail = $this->getDetailCache($id);
+				if (is_array($detail) && isset($detail[$id])) {
+					$detail[$id] = array_merge($detail[$id], $values);
+					if (cache($this->detail_name . $id, json_encode($detail)) === false) {
+						throw new \RuntimeException("商品详情缓存写入失败");
+					}
+				}
+			}
+			if (clearCartIndexResponseCache() !== true) {
+				throw new \RuntimeException("购物车响应缓存失效失败");
+			}
+			return true;
+		} catch (\Throwable $e) {
+			$this->markCatalogCacheDirty($context, $e->getMessage());
+			return false;
+		} finally {
+			$this->releaseFileLock($lock);
+		}
+	}
+	private function normalizeProductIds($pids)
 	{
 		if (!is_array($pids)) {
 			$pids = [$pids];
 		}
-		clearCartIndexResponseCache();
-		$this->updateInfoCache();
-		$this->updateDetailCache($pids);
-		$this->updateListCache($pids);
-		return true;
+		$pids = array_map("intval", $pids);
+		$pids = array_filter($pids, function ($pid) {
+			return $pid > 0;
+		});
+		return array_values(array_unique($pids));
 	}
 	public function getCurrencyRateCache()
 	{
@@ -117,6 +366,23 @@ class Product
 		return $currency_arr;
 	}
 	public function syncProduct($param)
+	{
+		$pid = intval($param["pid"] ?? 0);
+		if ($pid <= 0) {
+			return ["status" => 400, "msg" => "商品不存在"];
+		}
+		$timeout = max(1, floatval($param["timeout"] ?? 30));
+		$lock = $this->acquireCartSyncLock($pid, intval(ceil($timeout * 3)) + 15);
+		if ($lock === false) {
+			return ["status" => 409, "msg" => "商品数据正在同步，请稍后重试"];
+		}
+		try {
+			return $this->syncProductUnlocked($param);
+		} finally {
+			$this->releaseCartSyncLock($lock);
+		}
+	}
+	private function syncProductUnlocked($param)
 	{
 		$id = $param["pid"];
 		$product = \think\Db::name("products")->where("id", $id)->find();
@@ -203,14 +469,19 @@ class Product
 		}
 		$success_key = "cart_product_sync_success_" . $pid;
 		$failure_key = "cart_product_sync_failure_" . $pid;
-		$lock_key = "cart_product_sync_lock_" . $pid;
-		if (cache($success_key) || cache($failure_key) || cache($lock_key)) {
+		if (cache($success_key) || cache($failure_key)) {
 			return ["status" => 200, "msg" => "使用最近同步的商品数据"];
 		}
 		$timeout = max(1, floatval($param["timeout"] ?? 1));
-		cache($lock_key, 1, intval(ceil($timeout)) + 2);
+		$lock = $this->acquireCartSyncLock($pid, intval(ceil($timeout)) + 10);
+		if ($lock === false) {
+			return ["status" => 200, "msg" => "商品数据正在同步，已使用本地数据"];
+		}
 		try {
-			$result = $this->syncProduct($param);
+			if (cache($success_key) || cache($failure_key)) {
+				return ["status" => 200, "msg" => "使用最近同步的商品数据"];
+			}
+			$result = $this->syncProductUnlocked($param);
 			if (($result["status"] ?? 400) == 200) {
 				cache($success_key, 1, 15);
 			} else {
@@ -221,20 +492,126 @@ class Product
 			cache($failure_key, 1, 60);
 			return ["status" => 400, "msg" => "供应商同步失败，已使用本地数据"];
 		} finally {
-			cache($lock_key, null);
+			$this->releaseCartSyncLock($lock);
 		}
+	}
+	protected function acquireCartSyncLock($pid, $lease)
+	{
+		return $this->acquireFileLock("cart-sync", "product-" . intval($pid), $lease, true);
+	}
+	protected function acquireCatalogCacheLock($nonBlocking = false)
+	{
+		return $this->acquireFileLock("catalog-cache", "catalog", 120, $nonBlocking, $nonBlocking ? 0 : 5);
+	}
+	private function prepareLockDirectory($directory)
+	{
+		if (!is_dir($directory)) {
+			$previous_umask = umask(0027);
+			try {
+				$created = @mkdir($directory, 0750, true);
+			} finally {
+				umask($previous_umask);
+			}
+			if (!$created && !is_dir($directory)) {
+				return false;
+			}
+		}
+		@chmod($directory, 0750);
+		return is_dir($directory) && is_writable($directory);
+	}
+	protected function acquireFileLock($scope, $name, $lease, $nonBlocking, $waitSeconds = 0)
+	{
+		$data_dir = defined("CMF_DATA") ? CMF_DATA : sys_get_temp_dir() . DIRECTORY_SEPARATOR;
+		$locks_root = rtrim($data_dir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . "locks";
+		if (!$this->prepareLockDirectory($locks_root)) {
+			return false;
+		}
+		$lock_dir = $locks_root . DIRECTORY_SEPARATOR . $scope;
+		if (!$this->prepareLockDirectory($lock_dir)) {
+			return false;
+		}
+		$name = preg_replace('/[^a-z0-9_-]/i', '', (string) $name);
+		if ($name === '') {
+			return false;
+		}
+		$path = $lock_dir . DIRECTORY_SEPARATOR . $name . ".lock";
+		$previous_umask = umask(0027);
+		try {
+			$handle = @fopen($path, "c+");
+		} finally {
+			umask($previous_umask);
+		}
+		if (!is_resource($handle)) {
+			return false;
+		}
+		@chmod($path, 0640);
+		$deadline = microtime(true) + max(0, floatval($waitSeconds));
+		$locked = false;
+		do {
+			$locked = @flock($handle, LOCK_EX | LOCK_NB);
+			if ($locked || $nonBlocking || microtime(true) >= $deadline) {
+				break;
+			}
+			usleep(50000);
+		} while (true);
+		if (!$locked) {
+			fclose($handle);
+			return false;
+		}
+		try {
+			$token = bin2hex(random_bytes(16));
+		} catch (\Throwable $e) {
+			$token = sha1(uniqid((string) mt_rand(), true));
+		}
+		$lease = max(5, min(120, intval($lease)));
+		$metadata = json_encode(["token" => $token, "expires_at" => time() + $lease]);
+		if ($metadata === false || !ftruncate($handle, 0)) {
+			flock($handle, LOCK_UN);
+			fclose($handle);
+			return false;
+		}
+		rewind($handle);
+		$written = fwrite($handle, $metadata);
+		if ($written !== strlen($metadata) || !fflush($handle)) {
+			flock($handle, LOCK_UN);
+			fclose($handle);
+			return false;
+		}
+		return ["handle" => $handle, "path" => $path, "token" => $token, "lease" => $lease, "scope" => $scope];
+	}
+	protected function releaseCartSyncLock($lock)
+	{
+		return $this->releaseFileLock($lock);
+	}
+	protected function releaseFileLock($lock)
+	{
+		if (!is_array($lock) || !isset($lock["handle"], $lock["token"]) || !is_resource($lock["handle"])) {
+			return false;
+		}
+		$handle = $lock["handle"];
+		rewind($handle);
+		$metadata = json_decode(stream_get_contents($handle), true);
+		$is_owner = is_array($metadata) && isset($metadata["token"]) && hash_equals((string) $metadata["token"], (string) $lock["token"]);
+		if ($is_owner) {
+			ftruncate($handle, 0);
+			fflush($handle);
+		}
+		flock($handle, LOCK_UN);
+		fclose($handle);
+		return $is_owner;
 	}
 	public function cronSyncProduct()
 	{
 		$apis = \think\Db::name("zjmf_finance_api")->field("id,name")->where("type", "zjmf_api")->select()->toArray();
 		$currency_arr = $this->getCurrencyRateCache();
 		$local_currency = \think\Db::name("currencies")->where("default", 1)->value("code");
-		$updated_product_ids = [];
 		foreach ($apis as $api) {
+			$updated_product_ids = [];
 			$id = $api["id"];
 			$api_name = $api["name"];
-			$res = getZjmfUpstreamProductsInfo($id);
-			if ($res["status"] == 200) {
+			try {
+				$res = getZjmfUpstreamProductsInfo($id);
+				if ($res["status"] == 200) {
 				$upstream_currency = $res["data"]["currency"];
 				if ($local_currency == $upstream_currency) {
 					$rate = 1;
@@ -253,9 +630,27 @@ class Product
 								$pids[] = $info["id"];
 								$local_products[$info["id"]] = $product;
 							}
-							if ($info["stock_control"] != $product["upstream_stock_control"] || $info["qty"] != $product["upstream_qty"]) {
-								\think\Db::name("products")->where("id", $product["id"])->update(["upstream_qty" => $info["qty"], "upstream_stock_control" => $info["stock_control"]]);
-								$updated_product_ids[] = $product["id"];
+								if ($info["stock_control"] != $product["upstream_stock_control"] || $info["qty"] != $product["upstream_qty"]) {
+									$product_lock = $this->acquireCartSyncLock($product["id"], 120);
+									if ($product_lock !== false) {
+										try {
+											$current_product = \think\Db::name("products")->field("id,upstream_version,upstream_qty,upstream_stock_control")->where("id", $product["id"])->find();
+											if (empty($current_product)
+												|| intval($current_product["upstream_version"]) !== intval($product["upstream_version"])
+												|| intval($current_product["upstream_qty"]) !== intval($product["upstream_qty"])
+												|| intval($current_product["upstream_stock_control"]) !== intval($product["upstream_stock_control"])) {
+												continue;
+											}
+											$incoming_version = intval($info["location_version"] ?? 0);
+											if ($incoming_version > 0 && intval($current_product["upstream_version"]) > $incoming_version) {
+												continue;
+											}
+											$updated_product_ids[] = $product["id"];
+											\think\Db::name("products")->where("id", $product["id"])->update(["upstream_qty" => $info["qty"], "upstream_stock_control" => $info["stock_control"]]);
+										} finally {
+										$this->releaseCartSyncLock($product_lock);
+									}
+								}
 							}
 						}
 					}
@@ -276,17 +671,34 @@ class Product
 					$tmp = array_slice($pids, $i * $concurrent, $concurrent);
 					$res = getZjmfUpstreamProductsDetail($id, $tmp);
 					if ($res["status"] == 200) {
-						$detail = $res["data"]["detail"];
-						foreach ($detail as $key => $value) {
-							$local_product = $local_products[$key];
-							if ($local_product["upstream_price_type"] == "percent") {
-								$res = $this->baseUpdateProduct($value, $local_product, $rate, true);
-							} else {
-								$res = $this->customUpdateProduct($value, $local_product, $rate);
-							}
-							if ($res["status"] == 200) {
-								$updated_product_ids[] = $local_product["id"];
-								$desc = "定时任务同步供应商'{$api_name}'商品'{$value["name"]}'成功,本地#PRODUCT ID:" . $local_product["id"];
+							$detail = $res["data"]["detail"];
+							foreach ($detail as $key => $value) {
+								$local_product = $local_products[$key];
+								$product_lock = $this->acquireCartSyncLock($local_product["id"], 120);
+								if ($product_lock === false) {
+									continue;
+								}
+								try {
+									$current_product = \think\Db::name("products")->where("id", $local_product["id"])->find();
+									if (empty($current_product)) {
+										continue;
+									}
+									$incoming_version = intval($value["location_version"] ?? 0);
+									if ($incoming_version > 0 && intval($current_product["upstream_version"] ?? 0) >= $incoming_version) {
+										continue;
+									}
+									$local_product = $current_product;
+									$updated_product_ids[] = $local_product["id"];
+									if ($local_product["upstream_price_type"] == "percent") {
+										$res = $this->baseUpdateProduct($value, $local_product, $rate, true);
+									} else {
+										$res = $this->customUpdateProduct($value, $local_product, $rate);
+									}
+								} finally {
+									$this->releaseCartSyncLock($product_lock);
+								}
+								if ($res["status"] == 200) {
+									$desc = "定时任务同步供应商'{$api_name}'商品'{$value["name"]}'成功,本地#PRODUCT ID:" . $local_product["id"];
 								active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 5);
 							} else {
 								$desc = "定时任务同步供应商'{$api_name}'商品'{$value["name"]}'失败,本地#PRODUCT ID:{$local_product["id"]},报错信息:{$res["msg"]}";
@@ -302,16 +714,49 @@ class Product
 					$desc = "供应商'{$api_name}'暂无商品需要同步";
 					active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 5);
 				}
-			} else {
-				$desc = "定时任务获取供应商'{$api_name}'商品版本信息失败,请检查供应商接口是否可用或联系供应商更新财务系统至最新版本,报错信息:{$res["msg"]}";
+				} else {
+					$desc = "定时任务获取供应商'{$api_name}'商品版本信息失败,请检查供应商接口是否可用或联系供应商更新财务系统至最新版本,报错信息:{$res["msg"]}";
+					active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 5);
+				}
+			} catch (\Throwable $e) {
+				$desc = "定时任务同步供应商'{$api_name}'异常,已保留成功同步的数据,报错信息:" . $e->getMessage();
 				active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 5);
+			} finally {
+				$this->refreshCronProductCache($updated_product_ids, $api_name);
 			}
 		}
-		$updated_product_ids = array_values(array_unique(array_map("intval", $updated_product_ids)));
-		if (!empty($updated_product_ids)) {
-			$this->updateCache($updated_product_ids);
-		}
 		return true;
+	}
+	protected function refreshCronProductCache($pids, $apiName)
+	{
+		$pids = $this->normalizeProductIds($pids);
+		if (empty($pids)) {
+			return true;
+		}
+		try {
+			if ($this->updateCache($pids) !== true) {
+				throw new \RuntimeException("无法取得商品缓存构建锁");
+			}
+			return true;
+		} catch (\Throwable $e) {
+			$invalidateError = "";
+			try {
+				if ($this->invalidateCache($pids) !== true) {
+					throw new \RuntimeException("无法取得商品缓存失效锁");
+				}
+				} catch (\Throwable $invalidateException) {
+					$invalidateError = ",二次失效失败:" . $invalidateException->getMessage();
+					error_log("Failed to invalidate cron product cache: " . $invalidateException->getMessage());
+				}
+				$this->markCatalogCacheDirty("cron supplier cache refresh: " . $apiName, $e->getMessage() . $invalidateError);
+				$desc = "定时任务刷新供应商'{$apiName}'商品缓存失败,已保留数据库同步结果,报错信息:" . $e->getMessage() . $invalidateError;
+			try {
+				active_log_final(ClientActivityLog::markInternal($desc, "supplier"), 0, 5);
+			} catch (\Throwable $logException) {
+				error_log("Failed to record cron product cache error: " . $logException->getMessage());
+			}
+			return false;
+		}
 	}
 	public function baseUpdateProduct($upstream_product, $product, $rate = 1, $is_cron = false)
 	{
@@ -657,9 +1102,10 @@ class Product
 				}
 			}
 		}
-		if (!empty($dec)) {
-			\think\Db::name("products")->where("id", $pid)->update(["stock_control" => 1, "qty" => 0]);
-			$info = implode("\n", $dec) ?? "";
+			if (!empty($dec)) {
+				\think\Db::name("products")->where("id", $pid)->update(["stock_control" => 1, "qty" => 0]);
+				$this->refreshInventoryCache([$pid], "custom upstream price protection");
+				$info = implode("\n", $dec) ?? "";
 			$exist = \think\Db::name("info_notice")->where("relid", $pid)->where("type", "product")->where("admin", 1)->find();
 			if ($exist) {
 				\think\Db::name("info_notice")->where("relid", $pid)->where("type", "product")->where("admin", 1)->update(["info" => $info, "update_time" => time()]);
@@ -870,20 +1316,46 @@ class Product
 	}
 	public function updateListCache($pids = [], $force = false)
 	{
-		if (!is_array($pids)) {
-			$pids = [$pids];
+		$pids = $this->normalizeProductIds($pids);
+		$lock = $this->acquireCatalogCacheLock();
+		if ($lock === false) {
+			$this->markCatalogCacheDirty("list cache rebuild", "无法取得商品缓存构建锁");
+			return false;
 		}
+		try {
+			if (!$force && empty($pids) && !empty($this->getListCache())) {
+				return true;
+			}
+			$result = $this->updateListCacheUnlocked($pids, $force);
+			if ($result !== true) {
+				$this->markCatalogCacheDirty("list cache rebuild", "商品列表缓存写入失败");
+			}
+			return $result;
+		} finally {
+			$this->releaseFileLock($lock);
+		}
+	}
+	private function updateListCacheUnlocked($pids = [], $force = false)
+	{
+		$pids = $this->normalizeProductIds($pids);
 		$list = $this->getListCache();
-		if (empty($list) || $force) {
+		if (empty($list) || $force || empty($pids)) {
 			$list = $this->getList();
 		} else {
+			foreach ($pids as $pid) {
+				unset($list[$pid]);
+			}
 			$tmp = $this->getList($pids);
 			$list = $tmp + $list;
 		}
 		if ($list) {
-			cache($this->list_name, json_encode($list));
+			if (cache($this->list_name, json_encode($list)) === false) {
+				return false;
+			}
 		} else {
-			cache($this->list_name, null);
+			if (!$this->deleteCacheKey($this->list_name)) {
+				return false;
+			}
 		}
 		unset($list);
 		unset($tmp);
@@ -896,7 +1368,18 @@ class Product
 	}
 	public function deleteListCache()
 	{
-		cache($this->list_name, null);
-		return true;
+		$lock = $this->acquireCatalogCacheLock();
+		if ($lock === false) {
+			return false;
+		}
+		try {
+			return $this->deleteListCacheUnlocked();
+		} finally {
+			$this->releaseFileLock($lock);
+		}
+	}
+	private function deleteListCacheUnlocked()
+	{
+		return $this->deleteCacheKey($this->list_name);
 	}
 }

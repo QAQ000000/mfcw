@@ -169,7 +169,11 @@ class OauthController extends CommonController
 				} else {
 					userSetCookie($jwt["jwt"]);
 					$client = \think\Db::name("clients")->where("id", $clients_oauth["uid"])->find();
-					$idata = ["create_time" => time(), "description" => sprintf("使用%s : %s - User ID:%d 登录成功", $obj->meta()["name"], $client["username"], $clients_oauth["uid"]), "user" => $client["username"], "usertype" => "Client", "uid" => $clients_oauth["uid"], "ipaddr" => get_client_ip6(), "type" => 1, "activeid" => $clients_oauth["uid"], "port" => get_remote_port(), "type_data_id" => 0];
+						$storageLog = \app\common\logic\ClientActivityLog::prepareForCurrentSchema(sprintf("使用%s : %s - User ID:%d 登录成功", $obj->meta()["name"], $client["username"], $clients_oauth["uid"]));
+						$idata = ["create_time" => time(), "description" => $storageLog["description"], "user" => $client["username"], "usertype" => "Client", "uid" => $clients_oauth["uid"], "ipaddr" => get_client_ip6(), "type" => 1, "activeid" => $clients_oauth["uid"], "port" => get_remote_port(), "type_data_id" => 0];
+						if (isset($storageLog["client_visible"])) {
+							$idata["client_visible"] = $storageLog["client_visible"];
+						}
 					\think\Db::name("activity_log")->insert($idata);
 					header("Location:{$headerClientsUrl}");
 					exit;

@@ -5,6 +5,17 @@ namespace app\common\logic;
 class UpperReaches
 {
 	public $is_admin = false;
+	private function upstreamErrorForClient($message, $fallback)
+	{
+		if ($this->is_admin && (string) $message !== "") {
+			return (string) $message;
+		}
+		return $fallback;
+	}
+	private function protectDetailedSupplierLog($description, $containsUpstreamDetail)
+	{
+		return $containsUpstreamDetail ? ClientActivityLog::markInternal($description, "supplier") : $description;
+	}
 	public function getOs()
 	{
 		$res = $this->curl("/image?per_page=9999&sort=asc", [], 10, "GET");
@@ -296,7 +307,7 @@ class UpperReaches
 			$result = ["status" => 200, "msg" => "电源状态获取成功", "power_status" => $res["power"]];
 			\think\Db::name("upper_reaches_res")->where("id", $re["id"])->update(["power_status" => $res["power"]]);
 		} else {
-			$result = ["status" => 400, "msg" => $res["msg"] ?? lang("ERROR MESSAGE"), "power_status" => "error"];
+			$result = ["status" => 400, "msg" => $this->upstreamErrorForClient($res["msg"] ?? "", "获取电源状态失败，请稍后重试或联系管理员"), "power_status" => "error"];
 			\think\Db::name("upper_reaches_res")->where("id", $re["id"])->update(["power_status" => "error"]);
 		}
 		return $result;
@@ -309,7 +320,7 @@ class UpperReaches
 			$result = ["status" => 200, "msg" => "开机成功", "power_status" => $res["power"]];
 			\think\Db::name("upper_reaches_res")->where("id", $re["id"])->update(["power_status" => $res["power"]]);
 		} else {
-			$result = ["status" => 400, "msg" => $res["msg"] ?? lang("ERROR MESSAGE")];
+			$result = ["status" => 400, "msg" => $this->upstreamErrorForClient($res["msg"] ?? "", "开机失败，请稍后重试或联系管理员")];
 		}
 		return $result;
 	}
@@ -321,7 +332,7 @@ class UpperReaches
 			$result = ["status" => 200, "msg" => "关机成功", "power_status" => $res["power"]];
 			\think\Db::name("upper_reaches_res")->where("id", $re["id"])->update(["power_status" => $res["power"]]);
 		} else {
-			$result = ["status" => 400, "msg" => $res["msg"] ?? lang("ERROR MESSAGE")];
+			$result = ["status" => 400, "msg" => $this->upstreamErrorForClient($res["msg"] ?? "", "关机失败，请稍后重试或联系管理员")];
 		}
 		return $result;
 	}
@@ -333,7 +344,7 @@ class UpperReaches
 			$result = ["status" => 200, "msg" => "重启成功", "power_status" => $res["power"]];
 			\think\Db::name("upper_reaches_res")->where("id", $re["id"])->update(["power_status" => $res["power"]]);
 		} else {
-			$result = ["status" => 400, "msg" => $res["msg"] ?? lang("ERROR MESSAGE")];
+			$result = ["status" => 400, "msg" => $this->upstreamErrorForClient($res["msg"] ?? "", "重启失败，请稍后重试或联系管理员")];
 		}
 		return $result;
 	}
@@ -344,7 +355,7 @@ class UpperReaches
 		if ($res["code"] == 200) {
 			$result = ["status" => 200, "msg" => "VNC开启成功", "vnc_url" => $res["vnc_url"]];
 		} else {
-			$result = ["status" => 400, "msg" => $res["msg"] ?? lang("ERROR MESSAGE")];
+			$result = ["status" => 400, "msg" => $this->upstreamErrorForClient($res["msg"] ?? "", "控制台启动失败，请稍后重试或联系管理员")];
 		}
 		return $result;
 	}
@@ -362,7 +373,7 @@ class UpperReaches
 			$result = ["status" => 200, "msg" => "电源状态获取成功", "power_status" => $res["msg"]];
 			\think\Db::name("upper_reaches_res")->where("id", $re["id"])->update(["power_status" => $res["msg"]]);
 		} else {
-			$result = ["status" => 400, "msg" => $res["msg"] ?? lang("ERROR MESSAGE"), "power_status" => "error"];
+			$result = ["status" => 400, "msg" => $this->upstreamErrorForClient($res["msg"] ?? "", "获取电源状态失败，请稍后重试或联系管理员"), "power_status" => "error"];
 			\think\Db::name("upper_reaches_res")->where("id", $re["id"])->update(["power_status" => "error"]);
 		}
 		return $result;
@@ -376,7 +387,7 @@ class UpperReaches
 			$result = ["status" => 200, "msg" => "开机成功", "power_status" => $res["power"]];
 			\think\Db::name("upper_reaches_res")->where("id", $re["id"])->update(["power_status" => $res["power"]]);
 		} else {
-			$result = ["status" => 400, "msg" => $res["msg"] ?? lang("ERROR MESSAGE")];
+			$result = ["status" => 400, "msg" => $this->upstreamErrorForClient($res["msg"] ?? "", "开机失败，请稍后重试或联系管理员")];
 		}
 		return $result;
 	}
@@ -389,7 +400,7 @@ class UpperReaches
 			$result = ["status" => 200, "msg" => "关机成功", "power_status" => $res["power"]];
 			\think\Db::name("upper_reaches_res")->where("id", $re["id"])->update(["power_status" => $res["power"]]);
 		} else {
-			$result = ["status" => 400, "msg" => $res["msg"] ?? lang("ERROR MESSAGE")];
+			$result = ["status" => 400, "msg" => $this->upstreamErrorForClient($res["msg"] ?? "", "关机失败，请稍后重试或联系管理员")];
 		}
 		return $result;
 	}
@@ -402,7 +413,7 @@ class UpperReaches
 			$result = ["status" => 200, "msg" => "重启成功", "power_status" => $res["power"]];
 			\think\Db::name("upper_reaches_res")->where("id", $re["id"])->update(["power_status" => $res["power"]]);
 		} else {
-			$result = ["status" => 400, "msg" => $res["msg"] ?? lang("ERROR MESSAGE")];
+			$result = ["status" => 400, "msg" => $this->upstreamErrorForClient($res["msg"] ?? "", "重启失败，请稍后重试或联系管理员")];
 		}
 		return $result;
 	}
@@ -424,7 +435,7 @@ class UpperReaches
 			$result["data"]["password"] = $res["data"]["pass"];
 			$result["data"]["url"] = urlencode(base64_encode($url));
 		} else {
-			$result = ["status" => 400, "msg" => $res["msg"] ?? lang("ERROR MESSAGE")];
+			$result = ["status" => 400, "msg" => $this->upstreamErrorForClient($res["msg"] ?? "", "控制台启动失败，请稍后重试或联系管理员")];
 		}
 		return $result;
 	}
@@ -433,6 +444,7 @@ class UpperReaches
 		$url = $re["dcim_client_url"] . "/index.php?a=api";
 		$data = ["func" => "reloadSystem", "api_user" => $re["root"], "api_pass" => $re["pwd"], "id" => $re["dcim_client_id"], "password" => $params["password"], "action" => 0, "bootloader" => "bios", "mos" => $params["os"], "mcon" => 0, "port" => $params["port"], "part_type" => $params["part_type"], "xml" => "", "disk" => 0, "check_disk_size" => 0];
 		$res = $this->dcimClientRequest($url, $data, 30);
+		$containsUpstreamDetail = false;
 		if ($res["status"] == "success") {
 			$result = ["status" => 200, "msg" => "重装发起成功"];
 			if (!empty($re["hid"])) {
@@ -441,22 +453,24 @@ class UpperReaches
 				$description = sprintf("资源配置#%d发起重装系统成功", $re["id"]);
 			}
 		} else {
-			$result = ["status" => 400, "msg" => $res["msg"] ?? lang("ERROR MESSAGE")];
+			$result = ["status" => 400, "msg" => $this->upstreamErrorForClient($res["msg"] ?? "", "重装系统发起失败，请稍后重试或联系管理员")];
 			if (!empty($re["hid"])) {
 				if ($this->is_admin) {
-					$description = sprintf("发起重置密码失败,原因:%s - Host ID:%d", $res["msg"], $re["hid"]);
+					$description = sprintf("发起重装系统失败,原因:%s - Host ID:%d", $res["msg"] ?? "", $re["hid"]);
+					$containsUpstreamDetail = true;
 				} else {
-					$description = sprintf("发起重置密码失败 - Host ID:%d", $re["hid"]);
+					$description = sprintf("发起重装系统失败 - Host ID:%d", $re["hid"]);
 				}
 			} else {
-				$description = sprintf("资源配置#%d发起重置密码失败,原因:%s", $re["id"], $res["msg"]);
+				$description = sprintf("资源配置#%d发起重装系统失败,原因:%s", $re["id"], $res["msg"] ?? "");
+				$containsUpstreamDetail = true;
 			}
 		}
 		if (!empty($re["hid"])) {
 			$product = \think\Db::name("host")->field("uid")->where("id", $re["hid"])->find();
-			active_log_final("模块命令:" . $description, $product["uid"], 2, $re["hid"]);
+			active_log_final($this->protectDetailedSupplierLog("模块命令:" . $description, $containsUpstreamDetail), $product["uid"], 2, $re["hid"]);
 		} else {
-			active_log_final($description, 0, 2, $re["hid"]);
+			active_log_final($this->protectDetailedSupplierLog($description, $containsUpstreamDetail), 0, 2, $re["hid"]);
 		}
 		return $result;
 	}
@@ -465,6 +479,7 @@ class UpperReaches
 		$url = $re["dcim_client_url"] . "/index.php?a=api&id=" . $re["dcim_client_id"];
 		$data = ["func" => "crackpwd", "api_user" => $re["root"], "api_pass" => $re["pwd"], "password" => $params["password"], "other_user" => $params["other_user"], "user" => $params["user"]];
 		$res = $this->dcimClientRequest($url, $data, 30);
+		$containsUpstreamDetail = false;
 		if ($res["status"] == "success") {
 			$result = ["status" => 200, "msg" => "破解密码发起成功"];
 			if (!empty($re["hid"])) {
@@ -473,22 +488,24 @@ class UpperReaches
 				$description = sprintf("资源配置#%d发起重置密码成功", $re["id"]);
 			}
 		} else {
-			$result = ["status" => 400, "msg" => $res["msg"] ?? lang("ERROR MESSAGE")];
+			$result = ["status" => 400, "msg" => $this->upstreamErrorForClient($res["msg"] ?? "", "重置密码发起失败，请稍后重试或联系管理员")];
 			if (!empty($re["hid"])) {
 				if ($this->is_admin) {
-					$description = sprintf("发起重置密码失败,原因:%s - Host ID:%d", $res["msg"], $re["hid"]);
+					$description = sprintf("发起重置密码失败,原因:%s - Host ID:%d", $res["msg"] ?? "", $re["hid"]);
+					$containsUpstreamDetail = true;
 				} else {
 					$description = sprintf("发起重置密码失败 - Host ID:%d", $re["hid"]);
 				}
 			} else {
-				$description = sprintf("资源配置#%d发起重置密码失败,原因:%s", $re["id"], $res["msg"]);
+				$description = sprintf("资源配置#%d发起重置密码失败,原因:%s", $re["id"], $res["msg"] ?? "");
+				$containsUpstreamDetail = true;
 			}
 		}
 		if (!empty($re["hid"])) {
 			$product = \think\Db::name("host")->field("uid")->where("id", $re["hid"])->find();
-			active_log_final("模块命令:" . $description, $product["uid"], 2, $re["hid"]);
+			active_log_final($this->protectDetailedSupplierLog("模块命令:" . $description, $containsUpstreamDetail), $product["uid"], 2, $re["hid"]);
 		} else {
-			active_log_final($description, 0, 2, $re["hid"]);
+			active_log_final($this->protectDetailedSupplierLog($description, $containsUpstreamDetail), 0, 2, $re["hid"]);
 		}
 		return $result;
 	}
@@ -497,35 +514,39 @@ class UpperReaches
 		$url = $re["dcim_client_url"] . "/index.php?a=api";
 		$data = ["func" => "cancelReinstall", "api_user" => $re["root"], "api_pass" => $re["pwd"], "id" => $re["dcim_client_id"]];
 		$res = $this->dcimClientRequest($url, $data, 30);
-		$task_type = $res["task_type"];
 		$des = ["重装系统", "救援系统", "重置密码", "获取硬件信息"];
+		$task_type = intval($res["task_type"] ?? 0);
+		$task_name = $des[$task_type] ?? "任务";
+		$containsUpstreamDetail = false;
 		if ($res["status"] == "success") {
 			$result["status"] = 200;
 			$result["msg"] = "取消成功";
-			$result["task_type"] = $res["task_type"];
+			$result["task_type"] = $task_type;
 			if (!empty($re["hid"])) {
-				$description = sprintf("取消%s成功 - Host ID:%d", $des[$task_type], $re["hid"]);
+				$description = sprintf("取消%s成功 - Host ID:%d", $task_name, $re["hid"]);
 			} else {
-				$description = sprintf("资源配置#%d取消%s成功", $re["id"], $des[$task_type]);
+				$description = sprintf("资源配置#%d取消%s成功", $re["id"], $task_name);
 			}
 		} else {
 			$result["status"] = 400;
-			$result["msg"] = $res["msg"];
+			$result["msg"] = $this->upstreamErrorForClient($res["msg"] ?? "", "取消任务失败，请稍后重试或联系管理员");
 			if (!empty($re["hid"])) {
 				if ($this->is_admin) {
-					$description = sprintf("取消%s失败,原因:%s - Host ID:%d", $des[$task_type], $res["msg"], $re["hid"]);
+					$description = sprintf("取消%s失败,原因:%s - Host ID:%d", $task_name, $res["msg"] ?? "", $re["hid"]);
+					$containsUpstreamDetail = true;
 				} else {
-					$description = sprintf("取消%s失败 - Host ID:%d", $des[$task_type], $re["hid"]);
+					$description = sprintf("取消%s失败 - Host ID:%d", $task_name, $re["hid"]);
 				}
 			} else {
-				$description = sprintf("资源配置#%d取消%s失败,原因:%s", $re["id"], $des[$task_type], $res["msg"]);
+				$description = sprintf("资源配置#%d取消%s失败,原因:%s", $re["id"], $task_name, $res["msg"] ?? "");
+				$containsUpstreamDetail = true;
 			}
 		}
 		if (!empty($re["hid"])) {
 			$product = \think\Db::name("host")->field("uid")->where("id", $re["hid"])->find();
-			active_log_final("模块命令:" . $description, $product["uid"], 2, $re["hid"]);
+			active_log_final($this->protectDetailedSupplierLog("模块命令:" . $description, $containsUpstreamDetail), $product["uid"], 2, $re["hid"]);
 		} else {
-			active_log_final($description, 0, 2, $re["hid"]);
+			active_log_final($this->protectDetailedSupplierLog($description, $containsUpstreamDetail), 0, 2, $re["hid"]);
 		}
 		return $result;
 	}
@@ -588,7 +609,7 @@ class UpperReaches
 			}
 		} else {
 			$result["status"] = 400;
-			$result["msg"] = $res["msg"] ?? lang("ERROR MESSAGE");
+			$result["msg"] = $this->upstreamErrorForClient($res["msg"] ?? "", "获取任务进度失败，请稍后重试或联系管理员");
 		}
 		return $result;
 	}
@@ -611,7 +632,7 @@ class UpperReaches
 			$result["os"] = $os;
 		} else {
 			$result["status"] = 400;
-			$result["msg"] = $res["msg"];
+			$result["msg"] = $this->upstreamErrorForClient($res["msg"] ?? "", "获取操作系统失败，请稍后重试或联系管理员");
 		}
 		return $result;
 	}

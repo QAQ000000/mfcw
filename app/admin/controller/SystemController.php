@@ -536,11 +536,12 @@ hr {width: 600px; background-color: #cccccc; border: 0px; height: 1px; color: #0
 					}
 					$os_url = explode("^", explode($sub["option_name"], "|")[1])[0] ?: "";
 					\think\Db::name("host")->strict(false)->where("id", $v["id"])->update(["os_url" => $os_url]);
+					}
 				}
 			}
+			(new \app\common\logic\Product())->invalidateCacheOrMarkDirty($product_ids, "system dcim config migration");
+			return true;
 		}
-		return true;
-	}
 	/**
 	 * @title 更换授权码
 	 * @description 更换授权码

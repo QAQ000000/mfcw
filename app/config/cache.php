@@ -1,3 +1,3 @@
 <?php
 
-return ["type" => "complex", "default" => ["type" => "file", "host" => "../data/runtime/cahce/"], "file" => ["type" => "file", "path" => "../data/runtime/cahce/"], "redis" => ["type" => "redis", "host" => "127.0.0.1"]];
+return ["type" => "complex", "default" => ["type" => "app\\common\\cache\\AtomicFile", "path" => CMF_DATA . "runtime/cahce/"], "file" => ["type" => "app\\common\\cache\\AtomicFile", "path" => CMF_DATA . "runtime/cahce/"], "redis" => ["type" => "redis", "host" => "127.0.0.1"]];

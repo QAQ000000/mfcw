@@ -7,6 +7,15 @@ namespace app\home\controller;
  */
 class UpperReachesController extends CommonController
 {
+	private function getClientDcimResource($id)
+	{
+		return \think\Db::name("upper_reaches_res")->alias("r")
+			->field("r.*")
+			->join("host h", "h.id = r.hid")
+			->where("r.id", intval($id))
+			->where("h.uid", intval($this->request->uid))
+			->find();
+	}
 	/**
 	 * @title DCIM客户端重装系统
 	 * @description 接口说明:DCIM客户端重装系统
@@ -28,7 +37,7 @@ class UpperReachesController extends CommonController
 		$os = !empty($params["os"]) ? intval($params["os"]) : 0;
 		$port = !empty($params["port"]) ? intval($params["port"]) : 0;
 		$part_type = !empty($params["part_type"]) ? intval($params["part_type"]) : 0;
-		$re = \think\Db::name("upper_reaches_res")->where("id", $id)->find();
+		$re = $this->getClientDcimResource($id);
 		if (empty($re)) {
 			return jsonrule(["status" => 400, "msg" => "没有此资源配置"]);
 		}
@@ -37,7 +46,7 @@ class UpperReachesController extends CommonController
 		}
 		$data = ["password" => $password, "os" => $os, "port" => $port, "part_type" => $part_type];
 		$UpperReaches = new \app\common\logic\UpperReaches();
-		$UpperReaches->is_admin = true;
+		$UpperReaches->is_admin = false;
 		$result = $UpperReaches->dcimClientReinstall($re, $data);
 		return jsonrule($result);
 	}
@@ -59,7 +68,7 @@ class UpperReachesController extends CommonController
 		$password = !empty($params["password"]) ? trim($params["password"]) : "";
 		$other_user = !empty($params["other_user"]) ? intval($params["other_user"]) : 0;
 		$user = !empty($params["user"]) ? trim($params["user"]) : "";
-		$re = \think\Db::name("upper_reaches_res")->where("id", $id)->find();
+		$re = $this->getClientDcimResource($id);
 		if (empty($re)) {
 			return jsonrule(["status" => 400, "msg" => "没有此资源配置"]);
 		}
@@ -84,7 +93,7 @@ class UpperReachesController extends CommonController
 	{
 		$params = $this->request->param();
 		$id = !empty($params["id"]) ? trim($params["id"]) : "";
-		$re = \think\Db::name("upper_reaches_res")->where("id", $id)->find();
+		$re = $this->getClientDcimResource($id);
 		if (empty($re)) {
 			return jsonrule(["status" => 400, "msg" => "没有此资源配置"]);
 		}
@@ -132,7 +141,7 @@ class UpperReachesController extends CommonController
 	{
 		$params = $this->request->param();
 		$id = !empty($params["id"]) ? trim($params["id"]) : "";
-		$re = \think\Db::name("upper_reaches_res")->where("id", $id)->find();
+		$re = $this->getClientDcimResource($id);
 		if (empty($re)) {
 			return jsonrule(["status" => 400, "msg" => "没有此资源配置"]);
 		}
@@ -156,7 +165,7 @@ class UpperReachesController extends CommonController
 	{
 		$params = $this->request->param();
 		$id = !empty($params["id"]) ? trim($params["id"]) : "";
-		$re = \think\Db::name("upper_reaches_res")->where("id", $id)->find();
+		$re = $this->getClientDcimResource($id);
 		if (empty($re)) {
 			return jsonrule(["status" => 400, "msg" => "没有此资源配置"]);
 		}

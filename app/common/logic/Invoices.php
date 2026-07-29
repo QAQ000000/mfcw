@@ -314,14 +314,16 @@ class Invoices
 	public function processPaidInvoice($invoiceid, $email = true)
 	{
 		session_write_close();
+		$ip = get_client_ip6();
 		if (configuration("shd_process_paid_invoice")) {
-			\app\queue\job\InvoicePaid::push(["invoiceid" => $invoiceid, "email" => $email]);
+			\app\queue\job\InvoicePaid::push(["invoiceid" => $invoiceid, "email" => $email, "is_admin" => $this->is_admin, "ip" => $ip]);
 			return true;
 		}
-		return $this->processPaidInvoiceFinal($invoiceid, $email);
+		return $this->processPaidInvoiceFinal($invoiceid, $email, $ip);
 	}
-	public function processPaidInvoiceFinal($invoiceid, $email = true)
+	public function processPaidInvoiceFinal($invoiceid, $email = true, $ip = "")
 	{
+		$ip = $ip ?: get_client_ip6();
 		dcim_callback($invoiceid);
 		$invoice_data = \think\Db::name("invoices")->where("id", $invoiceid)->find();
 		$invoiceid = \intval($invoice_data["id"]);
@@ -358,7 +360,7 @@ class Invoices
 						\think\Db::name("host")->where("id", $host["id"])->update(["nextduedate" => $nextduedate, "nextinvoicedate" => $nextduedate, "regdate" => time()]);
 					}
 				}
-				$arr_admin = ["relid" => $val["rel_id"], "name" => "【管理员】订单支付完成提示", "type" => "invoice", "sync" => true, "admin" => true, "ip" => get_client_ip6()];
+				$arr_admin = ["relid" => $val["rel_id"], "name" => "【管理员】订单支付完成提示", "type" => "invoice", "sync" => true, "admin" => true, "ip" => $ip];
 				if (configuration("shd_allow_email_send_queue")) {
 					\app\queue\job\SendMail::push($arr_admin);
 				} else {
@@ -366,14 +368,14 @@ class Invoices
 				}
 				$admin = getReceiveAdmin();
 				foreach ($admin as $key => $value) {
-					$arr_admin1 = ["relid" => $val["rel_id"], "name" => "【管理员】订单支付完成提示", "type" => "invoice", "sync" => true, "admin" => true, "adminid" => $value["id"], "ip" => get_client_ip6()];
+					$arr_admin1 = ["relid" => $val["rel_id"], "name" => "【管理员】订单支付完成提示", "type" => "invoice", "sync" => true, "admin" => true, "adminid" => $value["id"], "ip" => $ip];
 					if (configuration("shd_allow_email_send_queue")) {
 						\app\queue\job\SendMail::push($arr_admin1);
 					} else {
 						$curl_multi_data[count($curl_multi_data)] = ["url" => "async", "data" => $arr_admin1];
 					}
 				}
-				$arr_client = ["relid" => $val["rel_id"], "name" => "付款成功提醒", "type" => "invoice", "sync" => true, "admin" => false, "ip" => get_client_ip6()];
+				$arr_client = ["relid" => $val["rel_id"], "name" => "付款成功提醒", "type" => "invoice", "sync" => true, "admin" => false, "ip" => $ip];
 				if ($email) {
 					if (configuration("shd_allow_email_send_queue")) {
 						\app\queue\job\SendMail::push($arr_client);
@@ -396,13 +398,14 @@ class Invoices
 				$productid = \think\Db::name("host")->where("id", $relid)->value("productid");
 				if (get_product_condition($productid) == "payment") {
 					if (configuration("shd_allow_auto_create_queue")) {
-						\app\queue\job\AutoCreate::push(["hid" => $relid, "is_admin" => $this->is_admin, "ip" => get_client_ip6()]);
+						\app\queue\job\AutoCreate::push(["hid" => $relid, "is_admin" => $this->is_admin, "ip" => $ip]);
 					} else {
-						$curl_multi_data[count($curl_multi_data)] = ["url" => "async_create", "data" => ["hid" => $relid, "is_admin" => $this->is_admin, "ip" => get_client_ip6()]];
+						$curl_multi_data[count($curl_multi_data)] = ["url" => "async_create", "data" => ["hid" => $relid, "is_admin" => $this->is_admin, "ip" => $ip]];
 					}
 				}
 				if ($host["domainstatus"] == "Suspended") {
 					$Host = new Host();
+					$Host->is_admin = $this->is_admin;
 					$result = $Host->unsuspend($relid, 1);
 					$logic_run_map = new RunMap();
 					$model_host = new \app\common\model\HostModel();
@@ -437,6 +440,7 @@ class Invoices
 				credit_log(["uid" => $uid, "desc" => "Add Funds Invoice #" . $invoiceid, "amount" => $amount, "relid" => $invoiceid, "notes" => $invoice_data["notes"]]);
 			} elseif ($type == "upgrade") {
 				$upgrade_logic = new Upgrade();
+				$upgrade_logic->is_admin = $this->is_admin;
 				$upgrade_logic->doUpgrade($relid);
 			} elseif ($type == "credit_limit") {
 				if ($invoice_data["credit_limit_prepayment"] == 1) {
@@ -445,9 +449,10 @@ class Invoices
 				}
 				$cli = \think\Db::name("clients")->where("id", $uid)->find();
 				$host = \think\Db::name("host")->alias("b")->field("b.id,b.uid,b.domain,b.nextinvoicedate,e.name")->leftJoin("orders c", "c.id = b.orderid")->leftJoin("invoices d", "d.id=c.invoiceid")->leftJoin("products e", "e.id = b.productid")->where("b.domainstatus", "Suspended")->where("d.invoice_id", $invoice_data["id"])->select()->toArray();
-				foreach ($host as $hv) {
-					$Host = new Host();
-					$result = $Host->unsuspend($hv["id"], 1);
+					foreach ($host as $hv) {
+						$Host = new Host();
+						$Host->is_admin = $this->is_admin;
+						$result = $Host->unsuspend($hv["id"], 1);
 					$logic_run_map = new RunMap();
 					$model_host = new \app\common\model\HostModel();
 					$data_i = [];
@@ -475,7 +480,7 @@ class Invoices
 			} elseif ($type == "combine") {
 				\think\Db::name("invoices")->where("id", $relid)->update(["status" => "Paid", "paid_time" => time(), "update_time" => time(), "is_delete" => 0]);
 				credit_log(["uid" => $uid, "desc" => "Credit Applied Invoice #" . $relid, "amount" => $amount, "relid" => $relid]);
-				$this->processPaidInvoice($relid);
+					$this->processPaidInvoiceFinal($relid, $email, $ip);
 			} elseif ($type == "voucher") {
 				\think\Db::name("voucher")->where("id", $relid)->update(["status" => "Pending", "update_time" => time()]);
 			} elseif ($type == "contract") {

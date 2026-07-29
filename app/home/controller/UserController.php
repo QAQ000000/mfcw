@@ -1350,10 +1350,13 @@ class UserController extends CommonController
 		$limit = $request->param("limit", 10);
 		$orderby = $request->param("orderby", "id");
 		$sort = $request->param("sort", "desc");
-		$where[] = ["uid", "=", $request->uid];
-		$param = $request->param();
-		$where[] = ["type", "=", 1];
-		$res = \think\Db::name("activity_log")->where($where)->where(function (\think\db\Query $query) use($param) {
+			$where[] = ["uid", "=", $request->uid];
+			$param = $request->param();
+			$where[] = ["type", "=", 1];
+			$visibility = function (\think\db\Query $query) {
+				\app\common\logic\ClientActivityLog::applyVisibilityFilter($query);
+			};
+			$res = \think\Db::name("activity_log")->where($where)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
 				$query->whereOr("description", "like", "%{$search_desc}%");
@@ -1371,7 +1374,7 @@ class UserController extends CommonController
 			$res[$key]["url"] = $value["description"];
 			$res[$key]["ip"] = $value["ipaddr"];
 		}
-		$count = \think\Db::name("activity_log")->where($where)->where(function (\think\db\Query $query) use($param) {
+			$count = \think\Db::name("activity_log")->where($where)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
 				$query->whereOr("description", "like", "%{$search_desc}%");

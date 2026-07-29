@@ -962,11 +962,12 @@ class OrderController extends GetUserController
 			\think\Db::name("host")->whereIn("id", array_column($hostids, "rel_id"))->update(["domainstatus" => "Cancelled"]);
 			\think\Db::name("products")->whereIn("id", $productids_qty)->setInc("qty", 1);
 			\think\Db::commit();
-		} catch (\Exception $e) {
-			\think\Db::rollback();
-			return jsonrule(["status" => 400, "msg" => lang("取消失败")]);
-		}
-		foreach ($invoiceidss as $ids1) {
+			} catch (\Exception $e) {
+				\think\Db::rollback();
+				return jsonrule(["status" => 400, "msg" => lang("取消失败")]);
+			}
+			(new \app\common\logic\Product())->refreshInventoryCache($productids_qty, "admin order cancel commit");
+			foreach ($invoiceidss as $ids1) {
 			active_log(sprintf($this->lang["Order_admin_cancel_success"], $ids1["uid"], $ids1["id"]), $ids1["uid"]);
 			active_log(sprintf($this->lang["Order_admin_cancel_success"], $ids1["uid"], $ids1["id"]), $ids1["uid"], "", 2);
 			hook("order_cancel", ["orderid" => $ids1["id"]]);
@@ -1013,11 +1014,12 @@ class OrderController extends GetUserController
 			}
 			\think\Db::name("products")->whereIn("id", $productids_qty)->setInc("qty", 1);
 			\think\Db::commit();
-		} catch (\Exception $e) {
-			\think\Db::rollback();
-			return jsonrule(["status" => 400, "msg" => lang("DELETE FAIL")]);
-		}
-		foreach ($orders as $ids) {
+			} catch (\Exception $e) {
+				\think\Db::rollback();
+				return jsonrule(["status" => 400, "msg" => lang("DELETE FAIL")]);
+			}
+			(new \app\common\logic\Product())->refreshInventoryCache($productids_qty, "admin order delete commit");
+			foreach ($orders as $ids) {
 			active_log(sprintf($this->lang["Order_admin_delete_success"], $ids["uid"], $ids["id"]), $ids["uid"]);
 			active_log(sprintf($this->lang["Order_admin_delete_success"], $ids["uid"], $ids["id"]), $ids["uid"], "", 2);
 			hook("order_delete", ["orderid" => $ids1["id"]]);
@@ -2092,7 +2094,7 @@ class OrderController extends GetUserController
 			}
 		}
 		foreach ($create_after_order as $v) {
-			$host_arr = ["hid" => $v, "is_admin" => true];
+			$host_arr = ["hid" => $v, "is_admin" => true, "ip" => get_client_ip6()];
 			$curl_multi_data[count($curl_multi_data)] = ["url" => "async_create", "data" => $host_arr];
 		}
 		if ($total == 0) {
@@ -2119,7 +2121,7 @@ class OrderController extends GetUserController
 				$invoice_logic->processPaidInvoice($invoiceid);
 			} else {
 				foreach ($create_after_pay as $hh) {
-					$curl_multi_data[count($curl_multi_data)] = ["url" => "async_create", "data" => ["hid" => $hh]];
+					$curl_multi_data[count($curl_multi_data)] = ["url" => "async_create", "data" => ["hid" => $hh, "is_admin" => true, "ip" => get_client_ip6()]];
 				}
 			}
 			$result["status"] = 200;
@@ -2325,6 +2327,7 @@ class OrderController extends GetUserController
 			\think\Db::name("host")->where("id", $host["id"])->update(["username" => $host["username"], "password" => cmf_encrypt($host["password"]), "serverid" => $host["server"]]);
 			if ($host_data["auto_setup"] == "on" && !empty($host["runcreate"])) {
 				$host_model = new \app\common\logic\Host();
+				$host_model->is_admin = true;
 				$result = $host_model->create($host["id"]);
 				$logic_run_map = new \app\common\logic\RunMap();
 				$model_host = new \app\common\model\HostModel();

@@ -120,17 +120,20 @@ class LogController extends \cmf\controller\HomeBaseController
 		$limit = $request->param("limit", 10);
 		$orderby = $request->param("orderby", "id");
 		$sort = $request->param("sort", "desc");
-		$where[] = ["uid", "=", $request->uid];
-		$param = $request->param();
-		$where[] = ["type", "=", 1];
-		$res = \think\Db::name("activity_log")->field("id,description,ipaddr ip,port,create_time,user")->where($where)->where(function (\think\db\Query $query) use($param) {
+			$where[] = ["uid", "=", $request->uid];
+			$param = $request->param();
+			$where[] = ["type", "=", 1];
+			$visibility = function (\think\db\Query $query) {
+				\app\common\logic\ClientActivityLog::applyVisibilityFilter($query);
+			};
+			$res = \think\Db::name("activity_log")->field("id,description,ipaddr ip,port,create_time,user")->where($where)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
 				$query->whereOr("description", "like", "%{$search_desc}%");
 				$query->whereOr("ipaddr", "like", "%{$search_desc}%");
 			}
 		})->page($page, $limit)->order($orderby, $sort)->select()->toArray();
-		$count = \think\Db::name("activity_log")->where($where)->where(function (\think\db\Query $query) use($param) {
+			$count = \think\Db::name("activity_log")->where($where)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
 				$query->whereOr("description", "like", "%{$search_desc}%");

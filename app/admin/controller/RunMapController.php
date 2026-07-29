@@ -51,7 +51,7 @@ class RunMapController extends AdminBaseController
 	 * @url /admin/run_map/repeat_task
 	 * @method POST
 	 * @param .name:id type:in require:0 default: other: desc:重发的请求任务id
-	 * @other active_type 1开通、2暂停、3解除暂停、4删除、5续费、6升降级、7DCIM流量重置、8魔方云流量重置
+		 * @other active_type 1开通、2暂停、3解除暂停、4删除、5续费、6升降级、7DCIM流量重置、8魔方云流量重置、9供应商升降级结算
 	 */
 	public function repeatTask(\think\Request $request)
 	{
@@ -84,20 +84,24 @@ class RunMapController extends AdminBaseController
 			case 5:
 				$result = $host_logic->renew($active_type_param[0]);
 				break;
-			case 6:
-				$result = $host_logic->changePackage($active_type_param[0], $active_type_param[1], $active_type_param[2], $active_type_param[3]);
-				break;
+				case 6:
+					$upgradeId = intval($active_type_param[4] ?? 0);
+					$result = $host_logic->changePackage($active_type_param[0], $active_type_param[1], $active_type_param[2], $active_type_param[3], $upgradeId);
+					break;
 			case 7:
 				$dcim = new \app\common\logic\Dcim();
 				$dcim->init($active_type_param[0]);
 				$result = $dcim->resetFlow($active_type_param[1], $active_type_param[2], $active_type_param[3]);
 				break;
-			case 8:
+				case 8:
 				$dcimcloud = new \app\common\logic\DcimCloud();
 				$dcimcloud->is_admin = true;
 				$dcimcloud->setUrlByServer($active_type_param[0]);
-				$result = $dcimcloud->resetFlow($active_type_param[1], $active_type_param[2], $active_type_param[3], $active_type_param[4]);
-				break;
+					$result = $dcimcloud->resetFlow($active_type_param[1], $active_type_param[2], $active_type_param[3], $active_type_param[4]);
+					break;
+				case 9:
+					$result = $host_logic->syncResourceUpgradeSettlement($active_type_param[0], $active_type_param[1], $active_type_param[2] ?? 0);
+					break;
 			default:
 				$result = ["status" => 400, "msg" => "无效记录", "data" => []];
 		}
@@ -112,7 +116,10 @@ class RunMapController extends AdminBaseController
 				break;
 			}
 		}
-		if ($result["status"] == 200) {
+			if ($result["status"] == 200) {
+				if ($res_data["active_type"] == 6 && !empty($upgradeId)) {
+					\think\Db::name("upgrades")->where("id", $upgradeId)->update(["status" => "Completed"]);
+				}
 			$model_run_map->editStatus($ID, 1);
 			$logic_run = new \app\common\logic\RunMap();
 			$logic_run->cronSuccess($res_data["last_execute_time"], $cron_type, $res_data["host_id"]);

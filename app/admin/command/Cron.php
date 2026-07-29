@@ -30,6 +30,7 @@ class Cron extends \think\console\Command
 			return null;
 		}
 		updateConfiguration("cron_last_run_lock_status", 1);
+		(new \app\common\logic\Product())->retryDirtyCacheInvalidation();
 		$this->dailyCronJob($config);
 		$this->hourlyCronJob($config);
 		$this->halfHourCronJob($config, $output);
@@ -146,6 +147,7 @@ class Cron extends \think\console\Command
 	{
 		$cancels = \think\Db::name("cancel_requests")->field("id,relid")->where("type", "Immediate")->where("delete_time", 0)->select()->toArray();
 		$host_logic = new \app\common\logic\Host();
+		$host_logic->is_admin = true;
 		foreach ($cancels as $cancel) {
 			$hid = $cancel["relid"];
 			$host = \think\Db::name("host")->where("id", $hid)->find();
@@ -289,7 +291,7 @@ class Cron extends \think\console\Command
 						pushHostInfo($v["id"]);
 					}
 				} else {
-					$curl_multi_data[$k] = ["url" => "async_create", "data" => ["hid" => $v["id"]]];
+					$curl_multi_data[$k] = ["url" => "async_create", "data" => ["hid" => $v["id"], "is_admin" => true, "ip" => ""]];
 				}
 			}
 		}
@@ -333,7 +335,7 @@ class Cron extends \think\console\Command
 						$this->ad_log(1, 2, 1, $v["id"]);
 						$logic_run_map->cronSuccess(time(), 1, $v["id"]);
 					} else {
-						active_log_final("产品到期暂停 - 暂停产品 Host ID:" . $v["id"] . "失败,失败原因:" . $result["msg"], $v["uid"], 5);
+						active_log_final(\app\common\logic\ClientActivityLog::markInternal("产品到期暂停 - 暂停产品 Host ID:" . $v["id"] . "失败,失败原因:" . $result["msg"], "cron"), $v["uid"], 5);
 						$data_i["host_id"] = $v["id"];
 						$data_i["description"] = "产品到期暂停 Host ID:{$v["id"]}失败。原因:{$result["msg"]}";
 						$data_i["active_type_param"] = [$v["id"], "due", $reason, $send];
@@ -383,9 +385,9 @@ class Cron extends \think\console\Command
 										$this->ad_log(4, 4, 1, $v["id"]);
 										$logic_run_map->cronSuccess(time(), 4, $v["id"]);
 									} else {
-										active_log_final("产品到期后删除 - 删除到期产品 Host ID:" . $v["id"] . "失败,失败原因:" . $result1["msg"], $v["uid"], 5);
+										active_log_final(\app\common\logic\ClientActivityLog::markInternal("产品到期后删除 - 删除到期产品 Host ID:" . $v["id"] . "失败,失败原因:" . $result1["msg"], "cron"), $v["uid"], 5);
 										$data_i["host_id"] = $v["id"];
-										$data_i["description"] = "产品到期删除 Host ID:{$v["id"]}失败。原因:{$result["msg"]}";
+										$data_i["description"] = "产品到期删除 Host ID:{$v["id"]}失败。原因:{$result1["msg"]}";
 										$data_i["active_type_param"] = [$v["id"], "cron"];
 										$is_zjmf = $model_host->isZjmfApi($v["id"]);
 										if ($is_zjmf) {
@@ -428,9 +430,9 @@ class Cron extends \think\console\Command
 							$this->ad_log(4, 4, 1, $v["id"]);
 							$logic_run_map->cronSuccess(time(), 4, $v["id"]);
 						} else {
-							active_log_final("产品到期后删除 - 删除到期产品 Host ID:" . $v["id"] . "失败,失败原因:" . $result1["msg"], $v["uid"], 5);
+							active_log_final(\app\common\logic\ClientActivityLog::markInternal("产品到期后删除 - 删除到期产品 Host ID:" . $v["id"] . "失败,失败原因:" . $result1["msg"], "cron"), $v["uid"], 5);
 							$data_i["host_id"] = $v["id"];
-							$data_i["description"] = "产品到期删除 Host ID:{$v["id"]}失败。原因:{$result["msg"]}";
+							$data_i["description"] = "产品到期删除 Host ID:{$v["id"]}失败。原因:{$result1["msg"]}";
 							$data_i["active_type_param"] = [$v["id"], "cron"];
 							$is_zjmf = $model_host->isZjmfApi($v["id"]);
 							if ($is_zjmf) {
@@ -667,9 +669,10 @@ class Cron extends \think\console\Command
 						$delete = true;
 					} catch (\Exception $e) {
 						\think\Db::rollback();
-					}
-					if ($delete) {
-						foreach ($ids as $id) {
+						}
+						if ($delete) {
+							(new \app\common\logic\Product())->refreshInventoryCache($productids, "cron unpaid order delete commit");
+							foreach ($ids as $id) {
 							$o = \think\Db::name("orders")->field("uid")->where("id", $id)->find();
 							$description = "删除未付款订单成功 -#Order ID:" . $id . " - User ID:" . $o["uid"];
 							active_log_final($description, $orders["uid"], 5);
@@ -700,10 +703,13 @@ class Cron extends \think\console\Command
 						\think\Db::name("products")->whereIn("id", $productids)->setInc("qty", 1);
 						\think\Db::commit();
 						$cancelled = true;
-					} catch (\Exception $e) {
-						\think\Db::rollback();
-					}
-					$ids = implode(",", $ids);
+						} catch (\Exception $e) {
+							\think\Db::rollback();
+						}
+						if ($cancelled) {
+							(new \app\common\logic\Product())->refreshInventoryCache($productids, "cron unpaid order cancel commit");
+						}
+						$ids = implode(",", $ids);
 					if ($ids) {
 						foreach ($ids as $id) {
 							$o = \think\Db::name("orders")->field("uid")->where("id", $id)->find();
@@ -768,7 +774,7 @@ class Cron extends \think\console\Command
 						$this->ad_log(2, 2, 1, $host["id"]);
 						$logic_run_map->cronSuccess(time(), 2, $host["id"]);
 					} else {
-						active_log_final("未实名客户产品暂停 - 暂停 Host ID:{$host["id"]}的产品失败,失败原因:" . $res["msg"], $host["uid"], 5);
+						active_log_final(\app\common\logic\ClientActivityLog::markInternal("未实名客户产品暂停 - 暂停 Host ID:{$host["id"]}的产品失败,失败原因:" . $res["msg"], "cron"), $host["uid"], 5);
 						$data_i["host_id"] = $host["id"];
 						$data_i["description"] = "未实名客户产品暂停 Host ID:{$host["id"]}失败。原因:{$res["msg"]}";
 						$data_i["active_type_param"] = [$host["id"], "uncertifi", "未实名认证", 0];
@@ -1361,9 +1367,10 @@ class Cron extends \think\console\Command
 								}
 							}
 						}
-						if (!empty($dec)) {
-							\think\Db::name("products")->where("id", $pid)->update(["stock_control" => 1, "qty" => 0]);
-							$info = implode("\n", $dec) ?? "";
+							if (!empty($dec)) {
+								\think\Db::name("products")->where("id", $pid)->update(["stock_control" => 1, "qty" => 0]);
+								(new \app\common\logic\Product())->refreshInventoryCache([$pid], "cron cost protection inventory change");
+								$info = implode("\n", $dec) ?? "";
 							$exist = \think\Db::name("info_notice")->where("relid", $pid)->where("type", "product")->where("admin", 1)->find();
 							if ($exist) {
 								\think\Db::name("info_notice")->where("relid", $pid)->where("type", "product")->where("admin", 1)->update(["info" => $info, "update_time" => time()]);
@@ -1539,9 +1546,10 @@ class Cron extends \think\console\Command
 					$os_url = explode("^", explode($sub["option_name"], "|")[1])[0] ?: "";
 					\think\Db::name("host")->strict(false)->where("id", $v["id"])->update(["os_url" => $os_url]);
 				}
+				}
 			}
-		}
-		return true;
+			(new \app\common\logic\Product())->invalidateCacheOrMarkDirty($product_ids, "cron dcim config migration");
+			return true;
 	}
 	public function moduleCron($type = "FiveMinuteCron")
 	{
@@ -1804,7 +1812,7 @@ class Cron extends \think\console\Command
 						if ($result["status"] == 200) {
 							active_log_final("信用额账单未支付产品到期暂停 - 暂停产品 Host ID:" . $v["id"] . "成功", $v["uid"], 5);
 						} else {
-							active_log_final("信用额账单未支付产品到期暂停 - 暂停产品 Host ID:" . $v["id"] . "失败,失败原因:" . $result["msg"], $v["uid"], 5);
+							active_log_final(\app\common\logic\ClientActivityLog::markInternal("信用额账单未支付产品到期暂停 - 暂停产品 Host ID:" . $v["id"] . "失败,失败原因:" . $result["msg"], "cron"), $v["uid"], 5);
 						}
 					}
 				}
@@ -1853,7 +1861,7 @@ class Cron extends \think\console\Command
 						$this->ad_log(1, 2, 1, $v["id"]);
 						$logic_run_map->cronSuccess(time(), 1, $v["id"]);
 					} else {
-						active_log_final("强制合同未签订暂停 - 暂停产品 Host ID:" . $v["id"] . "失败,失败原因:" . $result["msg"], $v["uid"], 5);
+						active_log_final(\app\common\logic\ClientActivityLog::markInternal("强制合同未签订暂停 - 暂停产品 Host ID:" . $v["id"] . "失败,失败原因:" . $result["msg"], "cron"), $v["uid"], 5);
 						$data_i["host_id"] = $v["id"];
 						$data_i["description"] = "强制合同未签订暂停 Host ID:{$v["id"]}失败。原因:{$result["msg"]}";
 						$data_i["active_type_param"] = [$v["id"], "due", $reason, $send];

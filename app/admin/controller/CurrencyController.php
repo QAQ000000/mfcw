@@ -167,6 +167,7 @@ class CurrencyController extends AdminBaseController
 			}
 			active_log(sprintf($this->lang["Currency_admin_updateCurrency"], $id, $dev));
 			if ($res) {
+				$this->invalidateProductCatalogCache();
 				return jsonrule(["status" => 200, "msg" => lang("UPDATE SUCCESS")]);
 			} else {
 				return jsonrule(["status" => 400, "msg" => lang("UPDATE FAIL")]);
@@ -198,6 +199,7 @@ class CurrencyController extends AdminBaseController
 					\think\Db::name("currencies")->where("id", $id)->delete();
 					\think\Db::name("pricing")->where("currency", $id)->delete();
 					\think\Db::commit();
+					$this->invalidateProductCatalogCache();
 					active_log(sprintf($this->lang["Currency_admin_deleteCurrency"], $id));
 				} catch (\Exception $e) {
 					\think\Db::rollback();
@@ -244,6 +246,7 @@ class CurrencyController extends AdminBaseController
 				$msg["data"][] = $result;
 			}
 		}
+		cache("shd_cron_currency_rate", null);
 		return jsonrule($msg);
 	}
 	private function getRate($method)
@@ -291,6 +294,7 @@ class CurrencyController extends AdminBaseController
 			\think\Db::name("currencies")->where("default", 1)->update(["default" => 0]);
 			\think\Db::name("currencies")->where("id", intval($id))->update(["default" => 1]);
 			\think\Db::commit();
+			$this->invalidateProductCatalogCache();
 			active_log(sprintf($this->lang["Currency_admin_default"], $id));
 		} catch (\Exception $e) {
 			\think\Db::rollback();
@@ -349,10 +353,21 @@ class CurrencyController extends AdminBaseController
 				}
 			}
 			\think\Db::commit();
+			$this->invalidateProductCatalogCache();
 		} catch (\Exception $e) {
 			\think\Db::rollback();
 			return false;
 		}
 		return true;
+	}
+	private function invalidateProductCatalogCache()
+	{
+			try {
+				$pids = \think\Db::name("products")->column("id");
+				return (new \app\common\logic\Product())->invalidateCacheOrMarkDirty($pids ?: [], "currency commit");
+			} catch (\Throwable $e) {
+			error_log("Failed to invalidate product cache after currency commit: " . $e->getMessage());
+			return false;
+		}
 	}
 }

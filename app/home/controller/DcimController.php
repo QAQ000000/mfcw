@@ -254,11 +254,17 @@ class DcimController extends CommonController
 			return json($result);
 		}
 		if ($host["api_type"] == "zjmf_api") {
-			$result = zjmfCurl($host["zjmf_api_id"], "/dcim/check_reinstall", ["id" => $host["dcimid"]]);
-			if ($result["status"] == 400 && $result["price"] > 0) {
+			$upstream = zjmfCurl($host["zjmf_api_id"], "/dcim/check_reinstall", ["id" => $host["dcimid"]]);
+			$dcim = new \app\common\logic\Dcim();
+			if (($upstream["status"] ?? 400) == 200) {
+				$result = $dcim->supplierSuccessForClient($upstream, "可以重装", ["num", "max_times"]);
+			} elseif (($upstream["status"] ?? 400) == 400 && isset($upstream["price"]) && $upstream["price"] > 0) {
+				$result = ["status" => 400, "msg" => "可以购买重装次数", "price" => $upstream["price"]];
 				if ($host["upstream_price_type"] == "percent") {
-					$result["price"] = round($result["price"] * $host["upstream_price_value"] / 100, 2);
+					$result["price"] = round($upstream["price"] * $host["upstream_price_value"] / 100, 2);
 				}
+			} else {
+				$result = $dcim->supplierFailureForClient($upstream, $uid, $id, "检查重装次数", "检查重装次数失败，请稍后重试或联系管理员");
 			}
 		} else {
 			if ($host["type"] == "dcim" && $host["config_option1"] != "bms") {
@@ -1011,7 +1017,13 @@ class DcimController extends CommonController
 		}
 		if ($host["api_type"] == "zjmf_api") {
 			$post_data["id"] = $host["dcimid"];
-			$result = zjmfCurl($host["zjmf_api_id"], "/dcim/hide_result", $post_data);
+			$upstream = zjmfCurl($host["zjmf_api_id"], "/dcim/hide_result", $post_data);
+			$dcim = new \app\common\logic\Dcim();
+			if (($upstream["status"] ?? 400) == 200) {
+				$result = ["status" => 200, "msg" => "隐藏成功"];
+			} else {
+				$result = $dcim->supplierFailureForClient($upstream, $uid, $id, "隐藏任务结果", "隐藏失败，请稍后重试或联系管理员");
+			}
 		} else {
 			\think\Db::name("host")->where("id", $id)->update(["show_last_act_message" => 0]);
 			$result["status"] = 200;
@@ -1030,9 +1042,13 @@ class DcimController extends CommonController
 	 * @return  power:电源状态(on开机off关机error无法连接not_support不支持电源控制)
 	 * @return  msg:状态信息描述
 	 */
-	public function refreshServerPowerStatus()
+	public function refreshServerPowerStatus(\think\Request $request)
 	{
 		$id = input("post.id", 0, "intval");
+		$host = \think\Db::name("host")->alias("a")->leftJoin("products b", "a.productid=b.id")->where("a.id", $id)->where("a.uid", $request->uid)->where("b.type", "dcim")->where("a.domainstatus", "Active")->find();
+		if (empty($host)) {
+			return json(["status" => 400, "msg" => lang("ID_ERROR")]);
+		}
 		$dcim = new \app\common\logic\Dcim();
 		$result = $dcim->refreshPowerStatus($id);
 		return json($result);

@@ -952,8 +952,7 @@ function updateConfiguration($setting, $value)
 }
 function clearCartIndexResponseCache()
 {
-	cache("cart_catalog_snapshot_version", str_replace(".", "", sprintf("%.6f", microtime(true))));
-	return true;
+	return cache("cart_catalog_snapshot_version", str_replace(".", "", sprintf("%.6f", microtime(true)))) === true;
 }
 function getEmailTemplateByType($type)
 {
@@ -1719,7 +1718,12 @@ function active_log_final($description, $userid = 0, $type = 0, $type_data_id = 
 		$usertype = "System";
 		$description = "Cron_" . $description;
 	}
+	$storage_log = \app\common\logic\ClientActivityLog::prepareForCurrentSchema($description);
+	$description = $storage_log["description"];
 	$idata = ["create_time" => time(), "description" => $description, "user" => $username ?? "", "usertype" => $usertype ?? "", "uid" => $userid ?? 0, "ipaddr" => $remote_ip, "type" => $type, "activeid" => $activeid ?? 0, "port" => $remote_port, "type_data_id" => $type_data_id ?? 0];
+	if (isset($storage_log["client_visible"])) {
+		$idata["client_visible"] = $storage_log["client_visible"];
+	}
 	\think\Db::name("activity_log")->insert($idata);
 	if ($from_type == 1) {
 		$exists_data = \think\Db::name("admin_log")->where("sessionid", $session_id)->find();
@@ -5986,7 +5990,7 @@ function advancedConfigOptionFilter($config_id, $configoptions = [])
 		foreach ($conditions as $kk => $vv) {
 			$condition_relation = $vv["relation"];
 			$sub_id = $vv["sub_id"];
-			$result = \think\Db::name("product_config_options_links")->where("relation_id", $vv["id"])->where("type", "result")->withAttr("sub_id", function ($value) {
+			$result = \think\Db::name("product_config_options_links")->where("relation_id", $vv["id"])->where("config_id", $config_id)->where("type", "result")->withAttr("sub_id", function ($value) {
 				return json_decode($value, true);
 			})->select()->toArray();
 			if (judgequantity($option_type)) {

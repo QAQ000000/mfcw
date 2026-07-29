@@ -207,6 +207,7 @@ class ProductController extends AdminBaseController
 			$gid = $params["gid"];
 			$pre_pid = $params["pre_pid"];
 			$current_gid = $params["current_gid"];
+			$affectedProductIds = \think\Db::name("products")->whereIn("gid", array_unique([intval($gid), intval($current_gid)]))->column("id");
 			if ($gid == $current_gid) {
 				if ($pre_pid) {
 					$pre_order = \think\Db::name("products")->where("id", $pre_pid)->value("order");
@@ -232,6 +233,7 @@ class ProductController extends AdminBaseController
 					\think\Db::name("products")->where("id", $pid)->update(["order" => $min_order - 1, "gid" => $current_gid]);
 				}
 			}
+			(new \app\common\logic\Product())->invalidateCacheOrMarkDirty($affectedProductIds, "product sort commit");
 			$re["status"] = 200;
 			$re["msg"] = lang("修改排序成功");
 			return jsonrule($re);
@@ -661,9 +663,7 @@ class ProductController extends AdminBaseController
 		active_log(sprintf($this->lang["Product_admin_delete"], $pro["name"], $id));
 		hook("product_delete", ["pid" => $id]);
 		$logic = new \app\common\logic\Product();
-		$logic->deleteDetailCache([$id]);
-		$logic->updateInfoCache();
-		$logic->updateListCache([$id], true);
+		$logic->updateCache([$id]);
 		return jsonrule(["status" => 200, "msg" => lang("DELETE SUCCESS")]);
 	}
 	/**
@@ -773,6 +773,10 @@ class ProductController extends AdminBaseController
 			unset($product_data["resource_pid"]);
 			$newpid = \think\Db::name("products")->insertGetId($product_data);
 			$gids = \think\Db::name("product_config_links")->alias("a")->leftJoin("product_config_groups b", "a.gid = b.id")->where("a.pid", $existingproduct)->where("b.global", 1)->column("a.gid");
+			$global_config_ids = [];
+			if (!empty($gids)) {
+				$global_config_ids = \think\Db::name("product_config_options")->whereIn("gid", $gids)->column("id");
+			}
 			$links = [];
 			if (!empty($gids)) {
 				foreach ($gids as $v) {
@@ -785,7 +789,17 @@ class ProductController extends AdminBaseController
 			}
 			$groups = \think\Db::name("product_config_links")->alias("a")->field("b.id,b.name,b.description,b.upstream_id")->leftJoin("product_config_groups b", "a.gid = b.id")->where("a.pid", $existingproduct)->where("b.global", 0)->order("a.id", "asc")->select()->toArray();
 			$lingAgeArr = [];
-			$map_link = [];
+			$map_config = [];
+			$map_sub = [];
+			foreach ($global_config_ids as $global_config_id) {
+				$map_config[$global_config_id] = $global_config_id;
+			}
+			if (!empty($global_config_ids)) {
+				$global_sub_ids = \think\Db::name("product_config_options_sub")->whereIn("config_id", $global_config_ids)->column("id");
+				foreach ($global_sub_ids as $global_sub_id) {
+					$map_sub[$global_sub_id] = $global_sub_id;
+				}
+			}
 			foreach ($groups as $group) {
 				$new_gid = \think\Db::name("product_config_groups")->insertGetId(["name" => $newproductname . "配置项组", "description" => $group["description"] ?? "配置项组描述", "upstream_id" => $group["upstream_id"] ?? 0]);
 				\think\Db::name("product_config_links")->insertGetId(["gid" => $new_gid, "pid" => $newpid]);
@@ -796,16 +810,16 @@ class ProductController extends AdminBaseController
 					$ov["gid"] = $new_gid;
 					$ov["copy_id"] = $oid;
 					$new_oid = \think\Db::name("product_config_options")->insertGetId($ov);
+					$map_config[$oid] = $new_oid;
 					$lingAgeArr[] = $new_oid;
 					$sub_options = \think\Db::name("product_config_options_sub")->where("config_id", $oid)->select()->toArray();
-					$map = [];
 					foreach ($sub_options as $sv) {
 						$sub_id = $sv["id"];
 						unset($sv["id"]);
 						$sv["config_id"] = $new_oid;
 						$sv["copy_id"] = $sub_id;
 						$new_sub_id = \think\Db::name("product_config_options_sub")->insertGetId($sv);
-						$map[$sub_id] = $new_sub_id;
+						$map_sub[$sub_id] = $new_sub_id;
 						$pricings = \think\Db::name("pricing")->where("type", "configoptions")->where("relid", $sub_id)->select()->toArray();
 						$new_pricings = [];
 						foreach ($pricings as $pv) {
@@ -817,27 +831,47 @@ class ProductController extends AdminBaseController
 							\think\Db::name("pricing")->insertAll($new_pricings);
 						}
 					}
-					$advance_links = \think\Db::name("product_config_options_links")->where("config_id", $oid)->order("id", "asc")->select()->toArray();
-					foreach ($advance_links as $advance_link) {
-						$advance_sub_ids = json_decode($advance_link["sub_id"], true);
-						$new_advance_sub_ids = [];
-						if (is_array($advance_sub_ids)) {
-							foreach ($advance_sub_ids as $k => $advance_sub_id) {
-								if (isset($map[$k])) {
-									$new_advance_sub_ids[$map[$k]] = $advance_sub_id;
-								}
-							}
-						}
-						$link_id = \think\Db::name("product_config_options_links")->insertGetId(["config_id" => $new_oid, "sub_id" => json_encode($new_advance_sub_ids), "relation" => $advance_link["relation"], "type" => $advance_link["type"], "relation_id" => 0, "upstream_id" => 0]);
-						$map_link[$advance_link["id"]] = $link_id;
-					}
 				}
 			}
-			foreach ($map_link as $old_link_id => $new_link_id) {
-				$old_link = \think\Db::name("product_config_options_links")->where("id", $old_link_id)->find();
-				if ($old_link["type"] == "result" && isset($map_link[$old_link["relation_id"]])) {
-					\think\Db::name("product_config_options_links")->where("id", $new_link_id)->where("type", "result")->update(["relation_id" => $map_link[$old_link["relation_id"]]]);
+			$source_config_ids = array_keys($map_config);
+			$advance_links = (new \app\common\model\SeniorConfModel())->getProductUseConfLinksFlatMap($source_config_ids);
+			$global_config_map = array_fill_keys($global_config_ids, true);
+			$map_link = [];
+			$condition_global_map = [];
+			$remap_sub_ids = function ($sub_ids) use($map_sub) {
+				$new_sub_ids = [];
+				if (is_array($sub_ids)) {
+					foreach ($sub_ids as $sub_id => $value) {
+						if (isset($map_sub[$sub_id])) {
+							$new_sub_ids[$map_sub[$sub_id]] = $value;
+						}
+					}
 				}
+				return $new_sub_ids;
+			};
+			foreach ($advance_links as $advance_link) {
+				if ($advance_link["type"] != "condition") {
+					continue;
+				}
+				$is_global = isset($global_config_map[$advance_link["config_id"]]);
+				$condition_global_map[$advance_link["id"]] = $is_global;
+				if ($is_global) {
+					$map_link[$advance_link["id"]] = $advance_link["id"];
+					continue;
+				}
+				$map_link[$advance_link["id"]] = \think\Db::name("product_config_options_links")->insertGetId(["config_id" => $map_config[$advance_link["config_id"]], "sub_id" => json_encode($remap_sub_ids($advance_link["sub_id"])), "relation" => $advance_link["relation"], "type" => "condition", "relation_id" => 0, "upstream_id" => 0]);
+			}
+			foreach ($advance_links as $advance_link) {
+				if ($advance_link["type"] != "result" || !isset($map_link[$advance_link["relation_id"]])) {
+					continue;
+				}
+				$result_is_global = isset($global_config_map[$advance_link["config_id"]]);
+				$condition_is_global = $condition_global_map[$advance_link["relation_id"]] ?? false;
+				if ($result_is_global && $condition_is_global) {
+					$map_link[$advance_link["id"]] = $advance_link["id"];
+					continue;
+				}
+				$map_link[$advance_link["id"]] = \think\Db::name("product_config_options_links")->insertGetId(["config_id" => $map_config[$advance_link["config_id"]], "sub_id" => json_encode($remap_sub_ids($advance_link["sub_id"])), "relation" => $advance_link["relation"], "type" => "result", "relation_id" => $map_link[$advance_link["relation_id"]], "upstream_id" => 0]);
 			}
 			if (!empty($lingAgeArr)) {
 				(new \app\common\model\ProductModel())->setLinkAge("copy")->handleLingAge($lingAgeArr);
@@ -3079,10 +3113,10 @@ class ProductController extends AdminBaseController
 		}
 		if ($product["api_type"] == "zjmf_api" && $product["upstream_pid"] > 0) {
 			return jsonrule(["status" => 400, "msg" => "不可修改库存"]);
-		}
-		$re = \think\Db::name("products")->where("id", $id)->update(["qty" => $param["qty"]]);
-		(new \app\common\logic\Product())->updateCache([$id]);
-		return jsonrule(["status" => 200, "msg" => "修改库存成功"]);
+			}
+			$re = \think\Db::name("products")->where("id", $id)->update(["qty" => $param["qty"]]);
+			(new \app\common\logic\Product())->refreshInventoryCache([$id], "admin product stock edit");
+			return jsonrule(["status" => 200, "msg" => "修改库存成功"]);
 	}
 	/**
 	 * @title 获取上游产品成本价
@@ -3483,8 +3517,9 @@ class ProductController extends AdminBaseController
 			if (empty($param["id"])) {
 				return json(["status" => 400, "msg" => lang("ERROR MESSAGE")]);
 			}
-			$desc = "";
-			$spg = \think\Db::name("user_product_groups")->where("id", $param["id"])->find();
+				$desc = "";
+				$spg = \think\Db::name("user_product_groups")->where("id", $param["id"])->find();
+				$oldPids = array_values(array_filter(array_map("intval", explode(",", (string) ($spg["pids"] ?? "")))));
 			$data["group_name"] = $param["group_name"];
 			if ($spg["group_name"] != $param["group_name"]) {
 				$desc .= "分组名由“" . $spg["group_name"] . "”改为“" . $param["group_name"] . "”";
@@ -3513,7 +3548,8 @@ class ProductController extends AdminBaseController
 			if (empty($desc)) {
 				$desc .= "未做任何修改";
 			}
-			(new \app\common\logic\Product())->updateListCache($param["pids"]);
+				$changedPids = array_values(array_unique(array_merge($oldPids, array_map("intval", (array) $param["pids"]))));
+				$this->invalidateProductCatalogAfterCommit($changedPids, "customer product group edit");
 			active_log(sprintf($this->lang["Product_admin_editProductgroup"], $param["id"], $desc));
 			return json(["status" => 200, "msg" => lang("SUCCESS MESSAGE")]);
 		}
@@ -3532,11 +3568,13 @@ class ProductController extends AdminBaseController
 	{
 		$params = $this->request->param();
 		$id = intval($params["id"]);
-		$res = \think\Db::name("user_product_groups")->where("id", $id)->find();
-		if (!empty($res)) {
+			$res = \think\Db::name("user_product_groups")->where("id", $id)->find();
+			if (!empty($res)) {
+				$pids = array_values(array_filter(array_map("intval", explode(",", (string) $res["pids"]))));
 			\think\Db::name("user_products")->where("gid", $id)->delete();
 			\think\Db::name("user_product_groups")->where("id", $id)->delete();
-			\think\Db::name("user_product_bates")->where("products", $id)->delete();
+				\think\Db::name("user_product_bates")->where("products", $id)->delete();
+				$this->invalidateProductCatalogAfterCommit($pids, "customer product group delete");
 			active_log(sprintf($this->lang["Product_admin_delProductgroup"], $res["group_name"], $id));
 			return jsonrule(["status" => 200, "msg" => lang("DELETE SUCCESS")]);
 		} else {
@@ -3606,23 +3644,26 @@ class ProductController extends AdminBaseController
 						$res = \think\Db::name("user_product_bates")->insertGetId($data);
 					}
 					\think\Db::commit();
-				} catch (\Exception $e) {
-					\think\Db::rollback();
-					return jsonrule(["status" => 400, "msg" => $e->getMessage()]);
-				}
-				active_log(sprintf($this->lang["Product_admin_UserProductgroup"], $res, $data["user"], $data["products"]));
+					} catch (\Exception $e) {
+						\think\Db::rollback();
+						return jsonrule(["status" => 400, "msg" => $e->getMessage()]);
+					}
+					$this->invalidateProductCatalogAfterCommit($this->getUserProductGroupPids([$data["products"]]), "customer discount create");
+					active_log(sprintf($this->lang["Product_admin_UserProductgroup"], $res, $data["user"], $data["products"]));
 				return json(["status" => 200, "msg" => lang("SUCCESS MESSAGE")]);
 			} else {
 				$desc = "";
-				$spg = \think\Db::name("user_product_bates")->where("id", $param["id"])->find();
-				$data["type"] = $param["type"];
-				if ($data["type"] == 0) {
-					\think\Db::startTrans();
+					$spg = \think\Db::name("user_product_bates")->where("id", $param["id"])->find();
+					$data["type"] = $param["type"];
+					if ($data["type"] == 0) {
+						$affectedPids = $this->getUserProductGroupPids([$spg["products"]]);
+						\think\Db::startTrans();
 					try {
-						$desc = "删除配置";
-						\think\Db::name("user_product_bates")->where("id", $param["id"])->delete();
-						\think\Db::commit();
-						active_log(sprintf($this->lang["Product_admin_UserProductgroupedit"], $param["id"], $desc, $data["user"], $data["products"]));
+							$desc = "删除配置";
+							\think\Db::name("user_product_bates")->where("id", $param["id"])->delete();
+							\think\Db::commit();
+							$this->invalidateProductCatalogAfterCommit($affectedPids, "customer discount delete");
+						active_log(sprintf($this->lang["Product_admin_UserProductgroupedit"], $param["id"], $desc, $spg["user"], $spg["products"]));
 						return json(["status" => 200, "msg" => lang("SUCCESS MESSAGE")]);
 					} catch (\Exception $e) {
 						\think\Db::rollback();
@@ -3673,12 +3714,25 @@ class ProductController extends AdminBaseController
 					\think\Db::rollback();
 					return jsonrule(["status" => 400, "msg" => $e->getMessage()]);
 				}
-				$pids = \think\Db::name("user_products")->where("gid", $param["products"])->column("pid");
-				(new \app\common\logic\Product())->updateListCache($pids);
+				$pids = $this->getUserProductGroupPids([$spg["products"], $param["products"]]);
+				$this->invalidateProductCatalogAfterCommit($pids, "customer discount edit");
 				active_log(sprintf($this->lang["Product_admin_UserProductgroupedit"], $param["id"], $desc, $data["user"], $data["products"]));
 				return json(["status" => 200, "msg" => lang("SUCCESS MESSAGE")]);
 			}
 		}
 		return json(["status" => 400, "msg" => lang("ERROR MESSAGE")]);
+	}
+	private function getUserProductGroupPids($groupIds)
+	{
+		$groupIds = array_values(array_unique(array_filter(array_map("intval", (array) $groupIds))));
+		if (empty($groupIds)) {
+			return [];
+		}
+		$pids = \think\Db::name("user_products")->whereIn("gid", $groupIds)->column("pid");
+		return array_values(array_unique(array_filter(array_map("intval", $pids))));
+	}
+	private function invalidateProductCatalogAfterCommit($pids, $context)
+	{
+		return (new \app\common\logic\Product())->invalidateCacheOrMarkDirty($pids, $context);
 	}
 }

@@ -58,15 +58,7 @@ class AdvancedOptionsController extends AdminBaseController
 			$option["sub_options"] = $sub_options ?: [];
 		}
 		$ids = array_column($options, "id");
-		$tmp = \think\Db::name("product_config_options_links")->field("id,config_id,relation,sub_id")->whereIn("config_id", $ids)->where("type", "condition")->where("relation_id", 0)->withAttr("sub_id", function ($value) {
-			return json_decode($value, true);
-		})->select()->toArray();
-		foreach ($tmp as &$v) {
-			$result = \think\Db::name("product_config_options_links")->field("id,config_id,relation,sub_id")->where("relation_id", $v["id"])->where("type", "result")->withAttr("sub_id", function ($value) {
-				return json_decode($value, true);
-			})->select()->toArray();
-			$v["result"] = $result ?: [];
-		}
+		$tmp = (new \app\common\model\SeniorConfModel())->getProductUseConfLinksMap($ids, $ids, true);
 		$data = ["options" => $options ?: [], "link" => $tmp ?: []];
 		return jsonrule(["status" => 200, "msg" => lang("SUCCESS MESSAGE"), "data" => $data]);
 	}
@@ -120,9 +112,12 @@ class AdvancedOptionsController extends AdminBaseController
 		if (!in_array("seniorConfig", $app)) {
 			return jsonrule(["status" => 400, "msg" => "免费版该功能不可用"]);
 		}
-		$params = $this->request->param();
-		$relation = $this->relation;
-		$uniq_arr = [];
+			$params = $this->request->param();
+			$relation = $this->relation;
+			$uniq_arr = [];
+			$link = [];
+			$new_cid = 0;
+			$new_result_tmp = [];
 		if (isset($params["link"]) && !empty($params["link"])) {
 			$link = $params["link"];
 			if (!is_array($link) || empty($link)) {
@@ -273,17 +268,28 @@ class AdvancedOptionsController extends AdminBaseController
 			$uniq_arr[] = implode(",", $tmp_arr2);
 		}
 		$arr = array_unique($uniq_arr);
-		if (count($arr) != count($uniq_arr)) {
-			return jsonrule(["status" => 400, "msg" => "条件不可完全一样"]);
-		}
-		$pids = [];
-		\think\Db::startTrans();
-		try {
-			if ($link) {
-				foreach ($link as $k => $v) {
-					$groups = \think\Db::name("product_config_groups")->alias("a")->field("b.pid")->leftJoin("product_config_links b", "a.id = b.gid")->leftJoin("product_config_options c", "a.id = c.gid")->where("c.id", $v["config_id"])->select()->toArray();
-					$pids = array_merge($pids, array_column($groups, "pid"));
-					ksort($v["sub_id"]);
+			if (count($arr) != count($uniq_arr)) {
+				return jsonrule(["status" => 400, "msg" => "条件不可完全一样"]);
+			}
+			$affected_config_ids = [];
+			foreach ($link as $link_id => $link_data) {
+				$affected_config_ids = array_merge($affected_config_ids, $this->getAdvancedLinkConfigIds($link_id), [$link_data["config_id"]]);
+				foreach (array_merge($link_data["result"] ?? [], $link_data["new_result"] ?? []) as $result_data) {
+					$affected_config_ids[] = $result_data["config_id"];
+				}
+			}
+			if ($new_cid) {
+				$affected_config_ids[] = $new_cid;
+				foreach ($params["result"] as $result_data) {
+					$affected_config_ids[] = $result_data["new_cid"];
+				}
+			}
+			$pids = $this->getProductIdsByConfigIds($affected_config_ids);
+			\think\Db::startTrans();
+			try {
+				if ($link) {
+					foreach ($link as $k => $v) {
+						ksort($v["sub_id"]);
 					$sub_id = json_encode($v["sub_id"]);
 					\think\Db::name("product_config_options_links")->where("id", $k)->update(["config_id" => $v["config_id"], "relation" => $v["relation"], "sub_id" => $sub_id]);
 					$result = $v["result"];
@@ -292,8 +298,8 @@ class AdvancedOptionsController extends AdminBaseController
 						$res_sub_id = json_encode($vv["sub_id"]);
 						\think\Db::name("product_config_options_links")->where("id", $kk)->update(["config_id" => $vv["config_id"], "relation" => $vv["relation"], "sub_id" => $res_sub_id]);
 					}
-					if ($new_result_tmp) {
-						foreach ($new_result_tmp as $kkk => $vvv) {
+						if (!empty($v["new_result"])) {
+							foreach ($v["new_result"] as $kkk => $vvv) {
 							ksort($vvv["sub_id"]);
 							$sub_id = json_encode($vvv["sub_id"]);
 							\think\Db::name("product_config_options_links")->insert(["config_id" => $vvv["config_id"], "sub_id" => $sub_id, "relation" => $vvv["relation"], "type" => "result", "relation_id" => $k]);
@@ -317,8 +323,10 @@ class AdvancedOptionsController extends AdminBaseController
 					}
 				}
 			}
-			$pids = array_unique($pids);
-			foreach ($pids as $pid) {
+				if (!empty($pids)) {
+					\think\Db::name("products")->whereIn("id", $pids)->setInc("location_version");
+				}
+				foreach ($pids as $pid) {
 				$res_array = hook("product_edit", ["pid" => $pid]);
 				foreach ($res_array as $res) {
 					if ($res["is_resource"] && $res["status"] != 200) {
@@ -329,10 +337,10 @@ class AdvancedOptionsController extends AdminBaseController
 			\think\Db::commit();
 		} catch (\Exception $e) {
 			\think\Db::rollback();
-			return jsonrule(["status" => 400, "msg" => lang("EDIT FAIL") . $e->getMessage()]);
-		}
-		\think\Db::name("products")->whereIn("id", $pids)->setInc("location_version");
-		return jsonrule(["status" => 200, "msg" => lang("EDIT SUCCESS")]);
+				return jsonrule(["status" => 400, "msg" => lang("EDIT FAIL") . $e->getMessage()]);
+			}
+			$this->invalidateProductCaches($pids);
+			return jsonrule(["status" => 200, "msg" => lang("EDIT SUCCESS")]);
 	}
 	/**
 	 * @title 删除条件
@@ -366,17 +374,23 @@ class AdvancedOptionsController extends AdminBaseController
 		if (!in_array("seniorConfig", $app)) {
 			return jsonrule(["status" => 400, "msg" => "免费版该功能不可用"]);
 		}
-		$params = $this->request->param();
-		$id = intval($params["id"]);
-		\think\Db::startTrans();
-		try {
-			\think\Db::name("product_config_options_links")->where("id", $id)->whereOr("relation_id", $id)->delete();
-			\think\Db::commit();
+			$params = $this->request->param();
+			$id = intval($params["id"]);
+			$config_ids = $this->getAdvancedLinkConfigIds($id);
+			$pids = $this->getProductIdsByConfigIds($config_ids);
+			\think\Db::startTrans();
+			try {
+				\think\Db::name("product_config_options_links")->where("id", $id)->whereOr("relation_id", $id)->delete();
+				if (!empty($pids)) {
+					\think\Db::name("products")->whereIn("id", $pids)->setInc("location_version");
+				}
+				\think\Db::commit();
 		} catch (\Exception $e) {
 			\think\Db::rollback();
-			return jsonrule(["status" => 400, "msg" => lang("DELETE FAIL")]);
-		}
-		return jsonrule(["status" => 200, "msg" => lang("DELETE SUCCESS")]);
+				return jsonrule(["status" => 400, "msg" => lang("DELETE FAIL")]);
+			}
+			$this->invalidateProductCaches($pids);
+			return jsonrule(["status" => 200, "msg" => lang("DELETE SUCCESS")]);
 	}
 	/**
 	 * @title 删除结果
@@ -410,17 +424,23 @@ class AdvancedOptionsController extends AdminBaseController
 		if (!in_array("seniorConfig", $app)) {
 			return jsonrule(["status" => 400, "msg" => "免费版该功能不可用"]);
 		}
-		$params = $this->request->param();
-		$id = intval($params["id"]);
-		\think\Db::startTrans();
-		try {
-			\think\Db::name("product_config_options_links")->where("id", $id)->where("type", "result")->delete();
-			\think\Db::commit();
+			$params = $this->request->param();
+			$id = intval($params["id"]);
+			$config_ids = $this->getAdvancedLinkConfigIds($id);
+			$pids = $this->getProductIdsByConfigIds($config_ids);
+			\think\Db::startTrans();
+			try {
+				\think\Db::name("product_config_options_links")->where("id", $id)->where("type", "result")->delete();
+				if (!empty($pids)) {
+					\think\Db::name("products")->whereIn("id", $pids)->setInc("location_version");
+				}
+				\think\Db::commit();
 		} catch (\Exception $e) {
 			\think\Db::rollback();
-			return jsonrule(["status" => 400, "msg" => lang("DELETE FAIL")]);
-		}
-		return jsonrule(["status" => 200, "msg" => lang("DELETE SUCCESS")]);
+				return jsonrule(["status" => 400, "msg" => lang("DELETE FAIL")]);
+			}
+			$this->invalidateProductCaches($pids);
+			return jsonrule(["status" => 200, "msg" => lang("DELETE SUCCESS")]);
 	}
 	/**
 	 * @title 添加条件
@@ -520,22 +540,31 @@ class AdvancedOptionsController extends AdminBaseController
 			}
 		}
 		$uniq = \think\Db::name("product_config_options_links")->where("config_id", $config_id)->where("sub_id", json_encode($sub_id))->where("relation", $params["relation"])->where("relation_id", 0)->where("type", "condition")->find();
-		if (!empty($uniq)) {
-			return jsonrule(["status" => 400, "msg" => "条件不可完全一样"]);
-		}
-		\think\Db::startTrans();
-		try {
+			if (!empty($uniq)) {
+				return jsonrule(["status" => 400, "msg" => "条件不可完全一样"]);
+			}
+			$config_ids = [$config_id];
+			foreach ($result as $result_data) {
+				$config_ids[] = $result_data["config_id"];
+			}
+			$pids = $this->getProductIdsByConfigIds($config_ids);
+			\think\Db::startTrans();
+			try {
 			$insert = ["config_id" => $config_id, "sub_id" => json_encode($sub_id), "relation" => $params["relation"] ?: "seq", "type" => "condition", "relation_id" => 0];
 			$condition_id = \think\Db::name("product_config_options_links")->insertGetId($insert);
-			foreach ($result as $value) {
-				\think\Db::name("product_config_options_links")->insert(["config_id" => $value["config_id"], "sub_id" => json_encode($value["sub_id"]), "relation" => $value["relation"] ?: "seq", "type" => "result", "relation_id" => $condition_id]);
-			}
-			\think\Db::commit();
+				foreach ($result as $value) {
+					\think\Db::name("product_config_options_links")->insert(["config_id" => $value["config_id"], "sub_id" => json_encode($value["sub_id"]), "relation" => $value["relation"] ?: "seq", "type" => "result", "relation_id" => $condition_id]);
+				}
+				if (!empty($pids)) {
+					\think\Db::name("products")->whereIn("id", $pids)->setInc("location_version");
+				}
+				\think\Db::commit();
 		} catch (\Exception $e) {
 			\think\Db::rollback();
-			return jsonrule(["status" => 400, "msg" => lang("ADD FAIL")]);
-		}
-		return jsonrule(["status" => 200, "msg" => lang("ADD SUCCESS")]);
+				return jsonrule(["status" => 400, "msg" => lang("ADD FAIL")]);
+			}
+			$this->invalidateProductCaches($pids);
+			return jsonrule(["status" => 200, "msg" => lang("ADD SUCCESS")]);
 	}
 	/**
 	 * @title 添加结果
@@ -609,17 +638,68 @@ class AdvancedOptionsController extends AdminBaseController
 			}
 		}
 		ksort($sub_id);
-		$sub_id = json_encode($sub_id);
-		$uniq = \think\Db::name("product_config_options_links")->where("config_id", $config_id)->where("sub_id", $sub_id)->where("relation", $params["relation"])->where("type", "result")->where("relation_id", $id)->find();
-		if (empty($uniq)) {
-			$res = \think\Db::name("product_config_options_links")->insert(["config_id" => $config_id, "relation" => $params["relation"], "type" => "result", "relation_id" => $id, "sub_id" => $sub_id]);
-			if ($res) {
-				return jsonrule(["status" => 200, "msg" => lang("SUCCESS MESSAGE")]);
-			} else {
+			$sub_id = json_encode($sub_id);
+			$uniq = \think\Db::name("product_config_options_links")->where("config_id", $config_id)->where("sub_id", $sub_id)->where("relation", $params["relation"])->where("type", "result")->where("relation_id", $id)->find();
+			if (!empty($uniq)) {
+				return jsonrule(["status" => 400, "msg" => "不可添加相同结果"]);
+			}
+			$config_ids = array_merge($this->getAdvancedLinkConfigIds($id), [$config_id]);
+			$pids = $this->getProductIdsByConfigIds($config_ids);
+			\think\Db::startTrans();
+			try {
+				$res = \think\Db::name("product_config_options_links")->insert(["config_id" => $config_id, "relation" => $params["relation"], "type" => "result", "relation_id" => $id, "sub_id" => $sub_id]);
+				if (!$res) {
+					throw new \RuntimeException("添加高级配置结果失败");
+				}
+				if (!empty($pids)) {
+					\think\Db::name("products")->whereIn("id", $pids)->setInc("location_version");
+				}
+				\think\Db::commit();
+			} catch (\Throwable $e) {
+				\think\Db::rollback();
 				return jsonrule(["status" => 400, "msg" => lang("FAIL MESSAGE")]);
 			}
-		} else {
-			return jsonrule(["status" => 400, "msg" => "不可添加相同结果"]);
+			$this->invalidateProductCaches($pids);
+			return jsonrule(["status" => 200, "msg" => lang("SUCCESS MESSAGE")]);
+		}
+		private function getAdvancedLinkConfigIds($link_id)
+		{
+			$link = \think\Db::name("product_config_options_links")->where("id", intval($link_id))->find();
+			if (empty($link)) {
+				return [];
+			}
+			$condition_id = $link["type"] === "condition" ? intval($link["id"]) : intval($link["relation_id"]);
+			if ($condition_id <= 0) {
+				return [];
+			}
+			$config_ids = \think\Db::name("product_config_options_links")->where("id", $condition_id)->whereOr("relation_id", $condition_id)->column("config_id");
+			return $this->normalizeIds($config_ids);
+		}
+		private function getProductIdsByConfigIds($config_ids)
+		{
+			$config_ids = $this->normalizeIds($config_ids);
+			if (empty($config_ids)) {
+				return [];
+			}
+			$pids = \think\Db::name("product_config_options")->alias("a")->leftJoin("product_config_links b", "b.gid = a.gid")->whereIn("a.id", $config_ids)->column("b.pid");
+			return $this->normalizeIds($pids);
+		}
+		private function invalidateProductCaches($pids)
+		{
+			$pids = $this->normalizeIds($pids);
+			if (empty($pids)) {
+				return true;
+			}
+			try {
+				return (new \app\common\logic\Product())->invalidateCacheOrMarkDirty($pids, "advanced option commit");
+			} catch (\Throwable $e) {
+				error_log("Failed to invalidate product cache after advanced rule commit: " . $e->getMessage());
+				return false;
+			}
+		}
+		private function normalizeIds($ids)
+		{
+			$ids = is_array($ids) ? $ids : [$ids];
+			return array_values(array_unique(array_filter(array_map("intval", $ids))));
 		}
 	}
-}

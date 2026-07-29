@@ -238,8 +238,8 @@ think\facade\Route::group("", function () {
     think\facade\Route::post("addindex_post", "home/common/addindexPost");
     think\facade\Route::post("addindex_del", "home/common/addindexDel");
     think\facade\Route::get("create_list", "home/index/createList");
-    think\facade\Route::post("cart/clear", "home/cart/clearCart");
-    think\facade\Route::post("uploads", "home/upload/upload");
+	think\facade\Route::post("cart/clear", "home/cart/clearCart");
+	think\facade\Route::post("uploads", "home/upload/upload");
     think\facade\Route::post("upper/dcim_client/reinstall", "home/upperReaches/dcimClientReinstall");
     think\facade\Route::post("upper/dcim_client/crack_pass", "home/upperReaches/dcimClientCrackPass");
     think\facade\Route::post("upper/dcim_client/cancel_task", "home/upperReaches/dcimClientCancelReinstall");
@@ -293,9 +293,9 @@ think\facade\Route::group("", function () {
     think\facade\Route::get("cart/hostinfo", "home/Cart/hostInfo");
     think\facade\Route::get("cart/credit", "home/Cart/getCredit");
     think\facade\Route::get("cart/stock_control", "home/Cart/getQty");
-    think\facade\Route::post("cart/resource_product", "home/Cart/postResourceProduct");
-    think\facade\Route::post("cart/createproducts", "home/Cart/postCreateProducts");
-    think\facade\Route::post("cart/productsgroups", "home/Cart/postProductGroups");
+	think\facade\Route::post("cart/resource_product", "home/Cart/postResourceProduct");
+	think\facade\Route::post("cart/createproducts", "home/Cart/postCreateProducts");
+	think\facade\Route::post("cart/productsgroups", "home/Cart/postProductGroups");
     think\facade\Route::get("cart/global_search", "home/cart/globalSearch");
     think\facade\Route::get("cart/index", "home/cart/index");
     think\facade\Route::get("cart/set_config", "home/cart/setConfig");

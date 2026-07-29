@@ -8,6 +8,7 @@ namespace app\admin\controller;
  */
 class ConfigOptionsController extends AdminBaseController
 {
+	private $changedProductIds = [];
 	/**
 	* @title 可选项配置组列表(本地已测试)
 	* @description 接口说明:可选项配置组列表
@@ -116,7 +117,7 @@ class ConfigOptionsController extends AdminBaseController
 					}
 					\think\Db::name("product_config_links")->insertAll($insert);
 					\think\Db::name("products")->whereIn("id", $products)->setInc("location_version");
-					(new \app\common\logic\Product())->updateCache($products);
+					$this->rememberProductIds($products);
 					foreach ($products as $pid) {
 						$res_array = hook("product_edit", ["pid" => $pid]);
 						foreach ($res_array as $res) {
@@ -128,8 +129,10 @@ class ConfigOptionsController extends AdminBaseController
 					active_log(sprintf($this->lang["Configoption_admin_createGroupsPost"], $groupid));
 				}
 				\think\Db::commit();
+				$this->invalidateChangedProductCache();
 			} catch (\Exception $e) {
 				\think\Db::rollback();
+				$this->discardChangedProductCache();
 				return jsonrule(["status" => 400, "msg" => $e->getMessage()]);
 			}
 			return jsonrule(["status" => 200, "msg" => lang("ADD SUCCESS"), "groupid" => $groupid]);
@@ -346,10 +349,12 @@ class ConfigOptionsController extends AdminBaseController
 				}
 				active_log(sprintf($this->lang["Configoption_admin_editGroupsPost"], $gid, $dec));
 				unset($dec);
-				if (!empty($param["productlinks"]) && is_array($param["productlinks"])) {
-					$pids = $param["productlinks"];
+				$new_pids = !empty($param["productlinks"]) && is_array($param["productlinks"]) ? $param["productlinks"] : [];
+				$old_pids = array_column($pcg2, "pid");
+				$pids = array_values(array_unique(array_merge($old_pids, $new_pids)));
+				if (!empty($pids)) {
 					\think\Db::name("products")->whereIn("id", $pids)->setInc("location_version");
-					(new \app\common\logic\Product())->updateCache($pids);
+					$this->rememberProductIds($pids);
 				}
 				foreach ($pids as $pid) {
 					$res_array = hook("product_edit", ["pid" => $pid]);
@@ -360,8 +365,10 @@ class ConfigOptionsController extends AdminBaseController
 					}
 				}
 				\think\Db::commit();
+				$this->invalidateChangedProductCache();
 			} catch (\Exception $e) {
 				\think\Db::rollback();
+				$this->discardChangedProductCache();
 				return jsonrule(["status" => 400, "msg" => $e->getMessage()]);
 			}
 			return jsonrule(["status" => 200, "msg" => lang("EDIT SUCCESS")]);
@@ -501,9 +508,11 @@ class ConfigOptionsController extends AdminBaseController
 					}
 				}
 				\think\Db::commit();
+				$this->invalidateChangedProductCache();
 				active_log(sprintf($this->lang["Configoption_admin_add"], $cid));
 			} catch (\Exception $e) {
 				\think\Db::rollback();
+				$this->discardChangedProductCache();
 				return jsonrule(["status" => 400, "msg" => $e->getMessage()]);
 			}
 			return jsonrule(["status" => 200, "msg" => lang("ADD SUCCESS"), "cid" => $cid]);
@@ -546,8 +555,10 @@ class ConfigOptionsController extends AdminBaseController
 					}
 				}
 				\think\Db::commit();
+				$this->invalidateChangedProductCache();
 			} catch (\Exception $e) {
 				\think\Db::rollback();
+				$this->discardChangedProductCache();
 				return jsonrule(["status" => 400, "msg" => lang("DELETE FAIL")]);
 			}
 			return jsonrule(["status" => 200, "msg" => lang("DELETE SUCCESS")]);
@@ -593,8 +604,10 @@ class ConfigOptionsController extends AdminBaseController
 					}
 				}
 				\think\Db::commit();
+				$this->invalidateChangedProductCache();
 			} catch (\Exception $e) {
 				\think\Db::rollback();
+				$this->discardChangedProductCache();
 				return jsonrule(["status" => 400, "msg" => lang("DELETE FAIL")]);
 			}
 			return jsonrule(["status" => 200, "msg" => lang("DELETE SUCCESS")]);
@@ -642,8 +655,10 @@ class ConfigOptionsController extends AdminBaseController
 					}
 				}
 				\think\Db::commit();
+				$this->invalidateChangedProductCache();
 			} catch (\Exception $e) {
 				\think\Db::rollback();
+				$this->discardChangedProductCache();
 				return jsonrule(["status" => 400, "msg" => lang("DELETE FAIL")]);
 			}
 			return jsonrule(["status" => 200, "msg" => lang("DELETE SUCCESS")]);
@@ -698,7 +713,7 @@ class ConfigOptionsController extends AdminBaseController
 			\think\Db::startTrans();
 			try {
 				$newgroupid = \think\Db::name("product_config_groups")->insertGetId($newgroup);
-				$oldpids = \think\Db::name("product_config_links")->field("pid")->where("gid", $gid)->select();
+				$oldpids = \think\Db::name("product_config_links")->field("pid")->where("gid", $gid)->select()->toArray();
 				if (!empty($oldpids)) {
 					foreach ($oldpids as $oldpid) {
 						$newlinks["gid"] = $newgroupid;
@@ -743,9 +758,16 @@ class ConfigOptionsController extends AdminBaseController
 					}
 				}
 				active_log(sprintf($this->lang["Configoption_admin_duplicateGroupsPost"], $gid));
+				$pids = array_column($oldpids, "pid");
+				if (!empty($pids)) {
+					\think\Db::name("products")->whereIn("id", $pids)->setInc("location_version");
+					$this->rememberProductIds($pids);
+				}
 				\think\Db::commit();
+				$this->invalidateChangedProductCache();
 			} catch (\Exception $e) {
 				\think\Db::rollback();
+				$this->discardChangedProductCache();
 				return jsonrule(["status" => 400, "msg" => lang("DUPLICATE FAIL")]);
 			}
 			return jsonrule(["status" => 200, "msg" => lang("DUPLICATE SUCCESS")]);
@@ -867,10 +889,12 @@ class ConfigOptionsController extends AdminBaseController
 				}
 			}
 		}
-		if ($num_update == 0 && $num_insert == 0) {
-			return jsonrule(["status" => 200, "pid" => $pid, "msg" => lang("CONFIG_GETOS_SUCCESS_NONUM")]);
-		} else {
-			$desc = lang("CONFIG_GETOS_ACTIVE_LOG", ["cid" => $cid, "num_update" => $num_update, "num_insert" => $num_insert]);
+			if ($num_update == 0 && $num_insert == 0) {
+				return jsonrule(["status" => 200, "pid" => $pid, "msg" => lang("CONFIG_GETOS_SUCCESS_NONUM")]);
+			} else {
+				$this->updateProductVersion($cid, "options");
+				$this->invalidateChangedProductCache();
+				$desc = lang("CONFIG_GETOS_ACTIVE_LOG", ["cid" => $cid, "num_update" => $num_update, "num_insert" => $num_insert]);
 			active_log($desc);
 			return jsonrule(["status" => 200, "pid" => $pid, "msg" => lang("CONFIG_GETOS_SUCCESS_NUM", ["num_update" => $num_update, "num_insert" => $num_insert])]);
 			exit;
@@ -1242,8 +1266,10 @@ class ConfigOptionsController extends AdminBaseController
 					}
 				}
 				\think\Db::commit();
+				$this->invalidateChangedProductCache();
 			} catch (\Exception $e) {
 				\think\Db::rollback();
+				$this->discardChangedProductCache();
 				return jsonrule(["status" => 400, "msg" => $e->getMessage()]);
 			}
 			return jsonrule(["status" => 200, "msg" => lang("EDIT SUCCESS")]);
@@ -1252,17 +1278,48 @@ class ConfigOptionsController extends AdminBaseController
 	}
 	private function updateProductVersion($id, $type = "groups")
 	{
+		$ids = is_array($id) ? array_values(array_unique(array_map("intval", $id))) : [intval($id)];
+		$ids = array_filter($ids);
 		if ($type == "options") {
-			$groups = \think\Db::name("product_config_groups")->alias("a")->field("b.pid")->leftJoin("product_config_links b", "a.id = b.gid")->leftJoin("product_config_options c", "a.id = c.gid")->where("c.id", $id)->select()->toArray();
+			$groups = \think\Db::name("product_config_groups")->alias("a")->field("b.pid")->leftJoin("product_config_links b", "a.id = b.gid")->leftJoin("product_config_options c", "a.id = c.gid")->whereIn("c.id", $ids)->select()->toArray();
 		} elseif ($type == "options_sub") {
-			$groups = \think\Db::name("product_config_groups")->alias("a")->field("b.pid")->leftJoin("product_config_links b", "a.id = b.gid")->leftJoin("product_config_options c", "a.id = c.gid")->leftJoin("product_config_options_sub d", "c.id = d.config_id")->where("d.id", $id)->select()->toArray();
+			$groups = \think\Db::name("product_config_groups")->alias("a")->field("b.pid")->leftJoin("product_config_links b", "a.id = b.gid")->leftJoin("product_config_options c", "a.id = c.gid")->leftJoin("product_config_options_sub d", "c.id = d.config_id")->whereIn("d.id", $ids)->select()->toArray();
 		} else {
-			$groups = \think\Db::name("product_config_groups")->alias("a")->field("b.pid")->leftJoin("product_config_links b", "a.id = b.gid")->where("a.id", $id)->select()->toArray();
+			$groups = \think\Db::name("product_config_groups")->alias("a")->field("b.pid")->leftJoin("product_config_links b", "a.id = b.gid")->whereIn("a.id", $ids)->select()->toArray();
 		}
-		$pids = array_column($groups, "pid");
-		\think\Db::name("products")->whereIn("id", $pids)->setInc("location_version");
-		(new \app\common\logic\Product())->updateCache($pids);
+		$pids = array_values(array_unique(array_filter(array_map("intval", array_column($groups, "pid")))));
+		if (!empty($pids)) {
+			\think\Db::name("products")->whereIn("id", $pids)->setInc("location_version");
+		}
+		$this->rememberProductIds($pids);
 		return $pids ?: [];
+	}
+	private function rememberProductIds($pids)
+	{
+		if (!is_array($pids)) {
+			$pids = [$pids];
+		}
+		$pids = array_filter(array_map("intval", $pids));
+		$this->changedProductIds = array_values(array_unique(array_merge($this->changedProductIds, $pids)));
+	}
+	private function invalidateChangedProductCache($pids = [])
+	{
+		$this->rememberProductIds($pids);
+		$changedProductIds = $this->changedProductIds;
+		$this->changedProductIds = [];
+			if (empty($changedProductIds)) {
+				return true;
+			}
+			try {
+				return (new \app\common\logic\Product())->invalidateCacheOrMarkDirty($changedProductIds, "config option commit");
+			} catch (\Throwable $e) {
+			error_log("Failed to invalidate product cache after config option commit: " . $e->getMessage());
+			return false;
+		}
+	}
+	private function discardChangedProductCache()
+	{
+		$this->changedProductIds = [];
 	}
 	/**
 	 * @title 可配置项（层级联动）
@@ -1313,8 +1370,10 @@ class ConfigOptionsController extends AdminBaseController
 				$sub_update_option["linkage_level"] = $sub_linkage_top_data["linkage_level"] . "-" . $param["sub_option_id"];
 			}
 			\think\Db::name("product_config_options_sub")->where("id", $param["sub_option_id"])->update($sub_update_option);
+			$this->invalidateChangedProductCache();
 			return jsonrule(["status" => 200, "msg" => "success", "option_id" => $param["option_id"], "sub_option_id" => $param["sub_option_id"]]);
 		} catch (\Throwable $e) {
+			$this->invalidateChangedProductCache();
 			return jsonrule(["status" => 400, "msg" => $e->getMessage()]);
 		}
 	}
@@ -1352,8 +1411,10 @@ class ConfigOptionsController extends AdminBaseController
 				throw new \think\Exception("请填写配置选项名称");
 			}
 			$param["option_id"] = $this->saveConfigOption();
+			$this->invalidateChangedProductCache();
 			return jsonrule(["status" => 200, "msg" => "success", "option_id" => $param["option_id"]]);
 		} catch (\Throwable $e) {
+			$this->invalidateChangedProductCache();
 			return jsonrule(["status" => 400, "msg" => $e->getMessage()]);
 		}
 	}
@@ -1398,12 +1459,14 @@ class ConfigOptionsController extends AdminBaseController
 				throw new \think\Exception("排序数据不存在");
 			}
 			$param["sub_ids"] = is_array($param["sub_ids"]) ? $param["sub_ids"] : explode(",", $param["sub_ids"]);
-			$count = count($param["sub_ids"]);
+			$this->updateProductVersion($param["sub_ids"], "options_sub");
 			foreach ($param["sub_ids"] as $key => $val) {
 				\think\Db::name("product_config_options_sub")->where("id", $val)->update(["sort_order" => $key]);
 			}
+			$this->invalidateChangedProductCache();
 			return jsonrule(["status" => 200, "msg" => "success"]);
 		} catch (\Throwable $e) {
+			$this->invalidateChangedProductCache();
 			return jsonrule(["status" => 400, "msg" => $e->getMessage()]);
 		}
 	}
@@ -1432,8 +1495,10 @@ class ConfigOptionsController extends AdminBaseController
 			$sub_ids = $sub_ids ?: [0];
 			\think\Db::name("product_config_options_sub")->whereIn("id", $sub_ids)->delete();
 			\think\Db::name("pricing")->where("type", "configoptions")->whereIn("relid", $sub_ids)->delete();
+			$this->invalidateChangedProductCache();
 			return jsonrule(["status" => 200, "msg" => "success"]);
 		} catch (\Throwable $e) {
+			$this->invalidateChangedProductCache();
 			return jsonrule(["status" => 400, "msg" => $e->getMessage()]);
 		}
 	}

@@ -1034,9 +1034,10 @@ class InvoiceController extends GetUserController
 			} catch (\Throwable $e) {
 				\think\Db::rollback();
 				return jsons(["status" => 400, "msg" => "支付失败:" . $e->getMessage()]);
-			}
-			$invoice_logic = new \app\common\logic\Invoices();
-			$invoice_logic->processPaidInvoice($invoiceid);
+				}
+				$invoice_logic = new \app\common\logic\Invoices();
+				$invoice_logic->is_admin = true;
+				$invoice_logic->processPaidInvoice($invoiceid);
 			$result["status"] = 200;
 			$result["msg"] = "支付成功";
 			$result["data"]["hostid"] = \think\Db::name("invoice_items")->where("invoice_id", $invoiceid)->where("type", "host")->where("delete_time", 0)->column("rel_id");
@@ -1690,6 +1691,7 @@ class InvoiceController extends GetUserController
 		if ($subtotal == 0) {
 			\think\Db::name("invoices")->where("id", $invoice_id)->update(["status" => "Paid", "paid_time" => time(), "update_time" => time()]);
 			$invoice_logic = new \app\common\logic\Invoices();
+			$invoice_logic->is_admin = true;
 			$invoice_logic->processPaidInvoice($invoice_id);
 			return jsons(["status" => 1001, "msg" => lang("BUY_SUCCESS")]);
 		} else {

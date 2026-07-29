@@ -351,15 +351,16 @@ class PublicController extends \cmf\controller\BaseController
 			$batch_num = 1;
 			$get = array_slice($data, 0, $batch_num);
 			$after = array_slice($data, $batch_num);
-			$data = $get[0]["data"];
-			$host_logic = new \app\common\logic\Host();
-			$host_logic->is_admin = $data["is_admin"] ? true : false;
-			$result = $host_logic->create($data["hid"], $data["ip"]);
+				$data = $get[0]["data"];
+				$host_logic = new \app\common\logic\Host();
+				$host_logic->is_admin = !empty($data["is_admin"]);
+				$ip = $data["ip"] ?? "";
+				$result = $host_logic->create($data["hid"], $ip);
 			$logic_run_map = new \app\common\logic\RunMap();
 			$model_host = new \app\common\model\HostModel();
 			$data_i = [];
 			$data_i["host_id"] = $data["hid"];
-			$data_i["active_type_param"] = [$data["hid"], $data["ip"]];
+				$data_i["active_type_param"] = [$data["hid"], $ip];
 			$is_zjmf = $model_host->isZjmfApi($data_i["host_id"]);
 			if ($result["status"] == 200) {
 				$data_i["description"] = "订单 - 开通 Host ID:{$data_i["host_id"]}的产品成功";
@@ -1096,8 +1097,9 @@ class PublicController extends \cmf\controller\BaseController
 	 */
 	public function checkToken()
 	{
-		$token = input("get.token", "");
-		if ($token == cache("resource_token")) {
+		$token = input("get.token");
+		$resourceToken = cache("resource_token");
+		if (is_string($token) && $token !== "" && is_string($resourceToken) && $resourceToken !== "" && hash_equals($resourceToken, $token)) {
 			$api = \think\Db::name("zjmf_finance_api")->where("is_resource", 1)->where("is_using", 1)->order("id", "desc")->find();
 			$id = $api["id"];
 			$url = rtrim($api["hostname"], "/");

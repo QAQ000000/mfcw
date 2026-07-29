@@ -8,6 +8,26 @@ namespace app\home\controller;
  */
 class ProvisionController extends CommonController
 {
+	private function isSupplierHost($host)
+	{
+		return \app\common\logic\ClientActivityLog::isSupplierApiType($host["api_type"] ?? "");
+	}
+	private function clientSafeModuleMessage($host, $message, $fallback)
+	{
+		return \app\common\logic\ClientActivityLog::clientSafeModuleError($message, $host["api_type"] ?? "", false, $fallback);
+	}
+
+	private function supplierProxyFailure($host, $action, $response, $fallback)
+	{
+		$message = is_array($response) ? (string) ($response["msg"] ?? "") : "";
+		$description = sprintf("%s失败#Host ID:%d - 原因:%s", $action, intval($host["id"] ?? 0), $message ?: "未知错误");
+		try {
+			active_log_final(\app\common\logic\ClientActivityLog::markInternal($description, "supplier"), intval($host["uid"] ?? 0), 2, intval($host["id"] ?? 0));
+		} catch (\Throwable $e) {
+			error_log("Failed to record supplier proxy error: " . $e->getMessage());
+		}
+		return ["status" => 400, "msg" => $fallback];
+	}
 	/**
 	 * @title 执行模块默认方法
 	 * @description 执行开机,关机,重启,重装系统
@@ -342,18 +362,19 @@ class ProvisionController extends CommonController
 			$result["msg"] = lang("ID_ERROR");
 			return jsonrule($result);
 		}
+		$isSupplierProxy = in_array($host["api_type"], ["zjmf_api", "resource"], true);
 		if ($host["api_type"] == "zjmf_api") {
 			$post_data["id"] = $host["dcimid"];
 			$post_data["key"] = $key;
 			$post_data["api_url"] = $api_url;
 			$post_data["now_jwt"] = input("post.now_jwt");
-			$result = zjmfCurl($host["zjmf_api_id"], "/zjmf_api/provision/custom/content?jwt=" . urlencode($post_data["now_jwt"]), $post_data);
+			$upstreamResult = zjmfCurl($host["zjmf_api_id"], "/zjmf_api/provision/custom/content?jwt=" . urlencode($post_data["now_jwt"]), $post_data);
 		} elseif ($host["api_type"] == "resource") {
 			$post_data["id"] = $host["dcimid"];
 			$post_data["key"] = $key;
 			$post_data["api_url"] = $api_url;
 			$post_data["now_jwt"] = input("post.now_jwt");
-			$result = resourceCurl($host["productid"], "/zjmf_api/provision/custom/content?jwt=" . urlencode($post_data["now_jwt"]), $post_data);
+			$upstreamResult = resourceCurl($host["productid"], "/zjmf_api/provision/custom/content?jwt=" . urlencode($post_data["now_jwt"]), $post_data);
 		} else {
 			if ($host["type"] == "dcimcloud") {
 				$dcimcloud = new \app\common\logic\DcimCloud();
@@ -365,9 +386,14 @@ class ProvisionController extends CommonController
 				$provision = new \app\common\logic\Provision();
 				$html = $provision->clientAreaDetail($id, $key, $api_url);
 			}
-			$result = [];
-			$result["status"] = 200;
-			$result["data"]["html"] = $html;
+			$result = ["status" => 200, "data" => ["html" => $html]];
+		}
+		if ($isSupplierProxy) {
+			if (($upstreamResult["status"] ?? 400) == 200 || ($upstreamResult["status"] ?? "") === "success") {
+				$result = ["status" => 200, "data" => ["html" => $upstreamResult["data"]["html"] ?? ""]];
+			} else {
+				$result = $this->supplierProxyFailure($host, "获取模块自定义内容", $upstreamResult, "获取内容失败，请稍后重试或联系管理员");
+			}
 		}
 		return jsonrule($result);
 	}
@@ -435,12 +461,16 @@ class ProvisionController extends CommonController
 			$res = $provision->execCustomFunc($func, $id);
 		}
 		$result = $res;
-		if ($res["status"] == "success" || $res["status"] == 200) {
+		if (($res["status"] ?? "") == "success" || ($res["status"] ?? 0) == 200) {
 			$result["status"] = 200;
-			$result["msg"] = $res["msg"] ?: "";
+			$result["msg"] = $this->clientSafeModuleMessage($host, $res["msg"] ?? "", "操作成功");
 		} else {
-			$result["status"] = 400;
-			$result["msg"] = $res["msg"] ?: "";
+			if ($this->isSupplierHost($host)) {
+				$result = $this->supplierProxyFailure($host, "执行模块自定义方法", $res, "操作失败，请稍后重试或联系管理员");
+			} else {
+				$result["status"] = 400;
+				$result["msg"] = $res["msg"] ?? "";
+			}
 		}
 		return json($result);
 	}
@@ -520,11 +550,15 @@ class ProvisionController extends CommonController
 					$result["data"]["list"][] = [];
 				}
 			}
-		} elseif ($res["status"] == 200) {
-			$result = $res;
+		} elseif (($res["status"] ?? 0) == 200) {
+			$result = ["status" => 200, "data" => $res["data"] ?? []];
 		} else {
-			$result["status"] = 400;
-			$result["msg"] = $res["msg"] ?: "";
+			if ($this->isSupplierHost($host)) {
+				$result = $this->supplierProxyFailure($host, "获取模块图表", $res, "获取图表失败，请稍后重试或联系管理员");
+			} else {
+				$result["status"] = 400;
+				$result["msg"] = $res["msg"] ?? "";
+			}
 		}
 		return json($result);
 	}
@@ -543,11 +577,14 @@ class ProvisionController extends CommonController
 	{
 		$hostid = input("post.id", 0, "int");
 		$func = input("post.func", "");
-		$host = \think\Db::name("host")->alias("h")->field("h.id,h.serverid,h.dcimid,h.uid,p.type,p.api_type,p.zjmf_api_id,p.config_option1")->leftjoin("products p", "h.productid=p.id")->where("h.id", $hostid)->find();
+		$host = \think\Db::name("host")->alias("h")->field("h.id,h.serverid,h.dcimid,h.uid,h.domainstatus,p.type,p.api_type,p.zjmf_api_id,p.config_option1")->leftjoin("products p", "h.productid=p.id")->where("h.id", $hostid)->find();
+		if (empty($host) || $host["domainstatus"] != "Active" || intval(request()->uid) !== intval($host["uid"])) {
+			return jsonrule(["status" => 400, "msg" => "不能执行该操作"]);
+		}
 		if ($host["api_type"] == "zjmf_api") {
 			$post_data["id"] = $host["dcimid"];
 			$post_data["func"] = $func;
-			$result = zjmfCurl($params["zjmf_api_id"], "/provision/button", $post_data);
+			$result = zjmfCurl($host["zjmf_api_id"], "/provision/button", $post_data);
 		} elseif ($host["api_type"] == "normal") {
 			if ($host["type"] == "dcimcloud") {
 				$dcimcloud = new \app\common\logic\DcimCloud();
@@ -573,6 +610,14 @@ class ProvisionController extends CommonController
 		} else {
 			$result["status"] = 400;
 			$result["msg"] = "接口类型错误";
+		}
+		if ($this->isSupplierHost($host)) {
+			if (($result["status"] ?? 400) == 200 || ($result["status"] ?? "") === "success") {
+				$result["status"] = 200;
+				$result["msg"] = "操作成功";
+			} else {
+				$result = $this->supplierProxyFailure($host, "执行模块自定义按钮", $result, "操作失败，请稍后重试或联系管理员");
+			}
 		}
 		return jsonrule($result);
 	}
@@ -617,17 +662,21 @@ class ProvisionController extends CommonController
 				}
 			}
 			$result = $res;
-			if ($res["status"] == "success" || $res["status"] == 200) {
+			if (($res["status"] ?? "") == "success" || ($res["status"] ?? 0) == 200) {
 				if ($host["api_type"] == "zjmf_api") {
 					if ($result["data"]["host"]) {
 						\think\Db::name("host")->where("id", $id)->update(["domainstatus" => $result["data"]["host"]["domainstatus"]]);
 					}
 				}
 				$result["status"] = 200;
-				$result["msg"] = $res["msg"] ?: "";
+				$result["msg"] = $this->clientSafeModuleMessage($host, $res["msg"] ?? "", "操作成功");
 			} else {
-				$result["status"] = 400;
-				$result["msg"] = $res["msg"] ?: "";
+				if ($this->isSupplierHost($host)) {
+					$result = $this->supplierProxyFailure($host, "执行 SSL 证书操作", $res, "操作失败，请稍后重试或联系管理员");
+				} else {
+					$result["status"] = 400;
+					$result["msg"] = $res["msg"] ?? "";
+				}
 			}
 			return json($result);
 		} catch (\Throwable $e) {
@@ -655,10 +704,10 @@ class ProvisionController extends CommonController
 		$result = ["orderInfo" => "", "downLoad" => ""];
 		if ($host["api_type"] == "zjmf_api") {
 			$res = zjmfCurl($host["zjmf_api_id"], "/provision/sslCertFunc", ["id" => $host["dcimid"], "func" => "getAllInfo"]);
-			if ($res["status"] == 200) {
+			if (($res["status"] ?? 0) == 200) {
 				$result = ["orderInfo" => $res["data"]["orderInfo"], "downLoad" => $res["data"]["downLoad"]];
 			} else {
-				return json($res);
+				return json($this->supplierProxyFailure($host, "下载 SSL 证书", $res, "获取证书失败，请稍后重试或联系管理员"));
 			}
 		} else {
 			$result["orderInfo"] = \think\Db::name("certssl_orderinfo")->where("hostid", $orderNo)->find();

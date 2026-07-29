@@ -4,6 +4,7 @@ namespace app\common\logic;
 
 class Upgrade
 {
+	public $is_admin = false;
 	public $lang;
 	public function initialize()
 	{
@@ -410,6 +411,7 @@ class Upgrade
 			\think\Db::name("host_config_options")->where("relid", $hid)->delete();
 			\think\Db::name("host_config_options")->insertAll($host_data_all);
 			$host_logic = new Host();
+			$host_logic->is_admin = true;
 			$res = $host_logic->changePackage($hid, $params, true);
 			$logic_run_map = new RunMap();
 			$model_host = new \app\common\model\HostModel();
@@ -1093,6 +1095,7 @@ class Upgrade
 			$uid = $upgrade["uid"];
 			$upgrade_amount = $upgrade["amount"];
 			$host_logic = new Host();
+			$host_logic->is_admin = $this->is_admin;
 			$is_config = false;
 			$is_upstream_product = false;
 			if ($upgrade["type"] == "product") {
@@ -1151,14 +1154,20 @@ class Upgrade
 					}
 					\think\Db::name("host_config_options")->insertGetId($insert_data);
 				}
-				$new_product = \think\Db::name("products")->field("stock_control")->where("id", $new_pid)->find();
-				if (isset($new_product["stock_control"]) && $new_product["stock_control"]) {
-					\think\Db::name("products")->where("id", $new_pid)->setDec("qty");
-				}
-				$old_product = \think\Db::name("products")->field("stock_control")->where("id", $old_pid)->find();
-				if (isset($old_product["stock_control"]) && $old_product["stock_control"]) {
-					\think\Db::name("products")->where("id", $old_pid)->setInc("qty");
-				}
+					$inventory_product_ids = [];
+					$new_product = \think\Db::name("products")->field("stock_control")->where("id", $new_pid)->find();
+					if (isset($new_product["stock_control"]) && $new_product["stock_control"]) {
+						\think\Db::name("products")->where("id", $new_pid)->setDec("qty");
+						$inventory_product_ids[] = intval($new_pid);
+					}
+					$old_product = \think\Db::name("products")->field("stock_control")->where("id", $old_pid)->find();
+					if (isset($old_product["stock_control"]) && $old_product["stock_control"]) {
+						\think\Db::name("products")->where("id", $old_pid)->setInc("qty");
+						$inventory_product_ids[] = intval($old_pid);
+					}
+					if (!empty($inventory_product_ids)) {
+						(new Product())->refreshInventoryCache($inventory_product_ids, "product upgrade inventory change");
+					}
 				$old_fieldids = \think\Db::name("customfields")->field("id,fieldname")->where("type", "product")->where("relid", $old_pid)->select()->toArray();
 				foreach ($old_fieldids as $ov) {
 					$new_fieldid = \think\Db::name("customfields")->where("type", "product")->where("relid", $new_pid)->where("fieldname", $ov["fieldname"])->value("id");
@@ -1226,7 +1235,7 @@ class Upgrade
 		$model_host = new \app\common\model\HostModel();
 		$data_i = [];
 		$data_i["host_id"] = $hid;
-		$data_i["active_type_param"] = [$hid, $params, intval($is_config), intval($is_upstream_product)];
+			$data_i["active_type_param"] = [$hid, $params, intval($is_config), intval($is_upstream_product), intval($upgrade_id)];
 		$is_zjmf = $model_host->isZjmfApi($data_i["host_id"]);
 		if ($res["status"] == 200) {
 			$data_i["description"] = " 账单支付成功 - 进行升降级 Host ID:{$data_i["host_id"]}的产品成功";

@@ -201,6 +201,9 @@ class UpgradeSystemController extends \think\Controller
 		$defaultTablePre = "shd_";
 		$prefix = config("database.prefix");
 		$prefix = $prefix ?: $defaultTablePre;
+		if (!preg_match('/^[a-z0-9_]+$/i', $prefix)) {
+			return jsonrule(["status" => 400, "msg" => "数据库表前缀不合法，升级已停止"]);
+		}
 		$system_version_type = \think\Db::name("configuration")->where("setting", "system_version_type")->find();
 		if ($system_version_type["value"] && $system_version_type["value"] == "beta") {
 			$beta_version = \think\Db::name("configuration")->where("setting", "beta_version")->find();
@@ -244,17 +247,31 @@ class UpgradeSystemController extends \think\Controller
 						$sql = trim($sql);
 						$sql = str_replace(" `{$defaultTablePre}", " `{$prefix}", $sql);
 						$sqls = explode(";\n", $sql);
-						foreach ($sqls as $sql) {
-							try {
-								\think\Db::execute($sql);
-							} catch (\Exception $e) {
+							foreach ($sqls as $sql) {
+								try {
+									\think\Db::execute($sql);
+								} catch (\Throwable $e) {
+									error_log("Database upgrade failed at version {$sql_version}: " . $e->getMessage());
+									return jsonrule(["status" => 400, "msg" => "数据库升级失败，版本号未更新，请检查服务端错误日志"]);
+								}
 							}
-						}
 					}
 				}
 			}
-		}
-		if ($system_version_type["value"] && $system_version_type["value"] == "beta") {
+			}
+				if (version_compare($last_version, "3.5.8.1", ">=")) {
+					$visibilityColumn = \think\Db::query("SHOW COLUMNS FROM `{$prefix}activity_log` LIKE 'client_visible'");
+					if (empty($visibilityColumn) || (string) ($visibilityColumn[0]["Default"] ?? "") !== "0") {
+						error_log("Database upgrade postcondition failed: activity_log.client_visible DEFAULT 0 is missing");
+						return jsonrule(["status" => 400, "msg" => "数据库升级校验失败，版本号未更新"]);
+					}
+					$dirtyRows = \think\Db::name("configuration")->where("setting", "_product_catalog_cache_dirty")->count();
+					if (intval($dirtyRows) !== 1) {
+						error_log("Database upgrade postcondition failed: product catalog dirty generation row is not unique");
+						return jsonrule(["status" => 400, "msg" => "商品缓存升级校验失败，版本号未更新"]);
+					}
+				}
+			if ($system_version_type["value"] && $system_version_type["value"] == "beta") {
 			\think\Db::name("configuration")->where("setting", "beta_version")->update(["value" => $last_version]);
 		}
 		\think\Db::name("configuration")->where("setting", "update_last_version")->update(["value" => $last_version]);

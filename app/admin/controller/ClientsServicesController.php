@@ -757,22 +757,28 @@ class ClientsServicesController extends GetUserController
 				$udata["os_url"] = "";
 			}
 		}
-		if (in_array($host_data["domainstatus"], ["Pending", "Active", "Suspended"])) {
-			if (in_array($param["domainstatus"], ["Cancelled", "Fraud", "Deleted"])) {
-				\think\Db::name("products")->where("id", $host_data["productid"])->setInc("qty", 1);
-			}
+			$inventory_product_ids = [];
+			if (in_array($host_data["domainstatus"], ["Pending", "Active", "Suspended"])) {
+				if (in_array($param["domainstatus"], ["Cancelled", "Fraud", "Deleted"])) {
+					\think\Db::name("products")->where("id", $host_data["productid"])->setInc("qty", 1);
+					$inventory_product_ids[] = intval($host_data["productid"]);
+				}
 		} else {
 			if (in_array($host_data["domainstatus"], ["Cancelled", "Fraud", "Deleted"])) {
 				if (in_array($param["domainstatus"], ["Pending", "Active", "Suspended"])) {
 					$product_info = \think\Db::name("products")->where("id", $host_data["productid"])->find();
 					if ($product_info["qty"] < 1) {
 						return jsonrule(["status" => 400, "msg" => "此产品库存不足，无法切换产品到此状态，请前往添加库存"]);
+						}
+						\think\Db::name("products")->where("id", $host_data["productid"])->setDec("qty", 1);
+						$inventory_product_ids[] = intval($host_data["productid"]);
 					}
-					\think\Db::name("products")->where("id", $host_data["productid"])->setDec("qty", 1);
 				}
 			}
-		}
-		\think\Db::name("host")->where("id", $hostid)->update($udata);
+			\think\Db::name("host")->where("id", $hostid)->update($udata);
+			if (!empty($inventory_product_ids)) {
+				(new \app\common\logic\Product())->refreshInventoryCache($inventory_product_ids, "admin service status change");
+			}
 		$amount = $param["amount"] ?: 0;
 		$provision_logic = new \app\common\logic\Provision();
 		$provision_logic->adminSave($hostid);

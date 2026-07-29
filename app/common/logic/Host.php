@@ -10,6 +10,19 @@ class Host
 	{
 		$this->lang = get_system_langs();
 	}
+	private function moduleErrorForClient($message, $apiType, $fallback)
+	{
+		return ClientActivityLog::clientSafeModuleError($message, $apiType, $this->is_admin, $fallback);
+	}
+	private function recordInternalModuleDiagnostic($description, $uid, $hostId, $source)
+	{
+		error_log($description);
+		try {
+			active_log_final(ClientActivityLog::markInternal($description, $source), $uid, 2, $hostId);
+		} catch (\Throwable $e) {
+			error_log("Failed to record internal module diagnostic: " . $e->getMessage());
+		}
+	}
 	/**
 	 * 作者: huanghao
 	 * 时间: 2019-12-13
@@ -20,8 +33,9 @@ class Host
 	 */
 	public function create($id, $ip = "")
 	{
+		$ip = $ip ?: get_client_ip6();
 		if (configuration("shd_allow_auto_create_queue")) {
-			\app\queue\job\AutoCreate::push(["hid" => $id, "ip" => $ip]);
+			\app\queue\job\AutoCreate::push(["hid" => $id, "ip" => $ip, "is_admin" => $this->is_admin]);
 			return ["status" => 200, "msg" => lang("MODULE_CREATE_SUCCESS")];
 		}
 		return $this->createFinal($id, $ip);
@@ -227,7 +241,7 @@ class Host
 			hook("after_module_create", ["params" => $hook_data]);
 			$host1 = \think\Db::name("host")->alias("a")->field("a.port")->field("a.id,a.uid,a.productid,a.domainstatus,a.regdate,b.welcome_email,b.type,c.email,a.billingcycle,b.pay_type,b.name,a.nextduedate,a.billingcycle,a.dedicatedip,a.username,a.password,a.os,a.assignedips,a.create_time")->leftJoin("products b", "a.productid=b.id")->leftJoin("clients c", "a.uid=c.id")->where("a.id", $id)->find();
 			$result["status"] = 200;
-			$result["msg"] = $module_res["msg"] ?? lang("MODULE_CREATE_SUCCESS");
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", lang("MODULE_CREATE_SUCCESS"));
 			if ($host["api_type"] == "resource") {
 				$post_data = [];
 				$post_data["host_id"] = $hostid;
@@ -257,20 +271,20 @@ class Host
 					$email = new Email();
 					$email->sendEmail($host["welcome_email"], $id, !empty($ip) ? $ip : get_client_ip6());
 				}
-				$host = \think\Db::name("host")->alias("a")->field("a.id,a.uid,a.dedicatedip,a.serverid,b.server_group")->leftJoin("products b", "a.productid=b.id")->where("a.id", $id)->find();
+				$host = \think\Db::name("host")->alias("a")->field("a.id,a.uid,a.dedicatedip,a.serverid,b.server_group,b.api_type")->leftJoin("products b", "a.productid=b.id")->where("a.id", $id)->find();
 				$server_groups = \think\Db::name("server_groups")->where("id", $host["server_group"])->find();
 				$servers = \think\Db::name("servers")->where("id", $host["serverid"])->find();
-				active_log_final(sprintf("开通host - User ID:%d - Host ID:%d - 服务器模块:%s - 接口:%s - IP:%s - 成功", $host["uid"], $id, $server_groups["name"], $servers["name"], $host["dedicatedip"]), $host["uid"], 2, $id);
+				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("开通host - User ID:%d - Host ID:%d - 服务器模块:%s - 接口:%s - IP:%s - 成功", $host["uid"], $id, $server_groups["name"], $servers["name"], $host["dedicatedip"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 				pushHostInfo($id, "domainstatus", "create");
 			}
 		} else {
 			hook("after_module_create_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
-			if (!empty($host["server_group"])) {
+			if (!empty($host["server_group"]) || ClientActivityLog::isSupplierApiType($host["api_type"] ?? "")) {
 				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:开通host - User ID:%d - Host ID:%d - 失败 - 原因：%s", $host["uid"], $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			}
 			pushHostInfo($id, "domainstatus", "create");
 			$result["status"] = 406;
-			$result["msg"] = $module_res["msg"];
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "开通失败，请稍后重试或联系管理员");
 		}
 		cache($cache_key, null);
 		return $result;
@@ -380,12 +394,12 @@ class Host
 				pushHostInfo($id, "domainstatus,suspendreason");
 			}
 			$result["status"] = 200;
-			$result["msg"] = $module_res["msg"] ?: lang("MODULE_SUSPEND_SUCCESS");
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", lang("MODULE_SUSPEND_SUCCESS"));
 		} else {
 			hook("after_module_suspend_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:暂停host - User ID:%d - Host ID:%s - 失败：%s", $host["uid"], $id, $module_res["msg"] . "-" . $reason), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
-			$result["msg"] = $module_res["msg"];
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "暂停失败，请稍后重试或联系管理员");
 		}
 		return $result;
 	}
@@ -485,7 +499,7 @@ class Host
 			}
 			active_log_final(sprintf("模块命令:解除暂停成功 - Host ID:%d", $id), $host["uid"], 2, $id);
 			$result["status"] = 200;
-			$result["msg"] = $module_res["msg"] ?: "解除暂停成功";
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "解除暂停成功");
 			$suspendreason = explode("-", $host["suspendreason"])[0];
 			if ($host["domainstatus"] == "Suspended" && ($suspendreason == "用量超额" || $suspendreason == "flow")) {
 				pushHostInfo($id, "domainstatus,suspendreason");
@@ -494,7 +508,7 @@ class Host
 			hook("after_module_unsuspend_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:解除暂停失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
-			$result["msg"] = $module_res["msg"];
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "解除暂停失败，请稍后重试或联系管理员");
 		}
 		return $result;
 	}
@@ -586,7 +600,7 @@ class Host
 			}
 			\think\Db::name("dcim_buy_record")->where("show_status", 0)->where("status", 1)->where("hostid", $id)->update(["show_status" => 1]);
 			$result["status"] = 200;
-			$result["msg"] = $module_res["msg"] ?: "删除成功";
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "删除成功");
 			pushHostInfo($id);
 			\think\Db::name("host")->where("id", $id)->update(["stream_info" => ""]);
 		} else {
@@ -597,11 +611,12 @@ class Host
 				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:删除失败#User ID:%d - Host ID:%d - 原因:%s", $host["uid"], $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			}
 			$result["status"] = 406;
-			$result["msg"] = $module_res["msg"];
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "删除失败，请稍后重试或联系管理员");
 		}
-		if ($result["status"] == 200 && in_array($host["domainstatus"], ["Pending", "Active", "Suspended"])) {
-			\think\Db::name("products")->where("id", $host["productid"])->setInc("qty", 1);
-		}
+			if ($result["status"] == 200 && in_array($host["domainstatus"], ["Pending", "Active", "Suspended"])) {
+				\think\Db::name("products")->where("id", $host["productid"])->setInc("qty", 1);
+				(new Product())->refreshInventoryCache([$host["productid"]], "host termination inventory return");
+			}
 		return $result;
 	}
 	public function sync($id)
@@ -701,13 +716,13 @@ class Host
 			hook("after_module_sync", ["params" => $hook_data]);
 			active_log_final(sprintf("模块命令:同步成功#Host ID:%d", $id), $host["uid"], 2, $id);
 			$result["status"] = 200;
-			$result["msg"] = $module_res["msg"] ?: "同步成功";
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "同步成功");
 			pushHostInfo($id);
 		} else {
 			hook("after_module_sync_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:同步失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
-			$result["msg"] = $module_res["msg"];
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "同步失败，请稍后重试或联系管理员");
 		}
 		return $result;
 	}
@@ -785,12 +800,12 @@ class Host
 				hook("after_module_on", ["params" => $hook_data]);
 				active_log_final(sprintf("模块命令:开机成功#Host ID:%d", $id), $host["uid"], 2, $id);
 				$result["status"] = 200;
-				$result["msg"] = $module_res["msg"] ?: "开机成功";
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "开机成功");
 			} else {
 				hook("after_module_on_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:开机失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 				$result["status"] = 406;
-				$result["msg"] = $module_res["msg"];
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "开机失败，请稍后重试或联系管理员");
 			}
 		}
 		return $result;
@@ -869,12 +884,12 @@ class Host
 				hook("after_module_off", ["params" => $hook_data]);
 				active_log_final(sprintf("模块命令:关机成功#Host ID:%d", $id), $host["uid"], 2, $id);
 				$result["status"] = 200;
-				$result["msg"] = $module_res["msg"] ?: "关机成功";
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "关机成功");
 			} else {
 				hook("after_module_off_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:关机失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 				$result["status"] = 406;
-				$result["msg"] = $module_res["msg"];
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "关机失败，请稍后重试或联系管理员");
 			}
 		}
 		return $result;
@@ -953,12 +968,12 @@ class Host
 				hook("after_module_reboot", ["params" => $hook_data]);
 				active_log_final(sprintf("模块命令:重启成功#Host ID:%d", $id), $host["uid"], 2, $id);
 				$result["status"] = 200;
-				$result["msg"] = $module_res["msg"] ?: "重启成功";
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "重启成功");
 			} else {
 				hook("after_module_reboot_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:重启失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 				$result["status"] = 406;
-				$result["msg"] = $module_res["msg"];
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "重启失败，请稍后重试或联系管理员");
 			}
 		}
 		return $result;
@@ -1033,12 +1048,12 @@ class Host
 				hook("after_module_hard_off", ["params" => $hook_data]);
 				active_log_final(sprintf("模块命令:硬关机成功#Host ID:%d", $id), $host["uid"], 2, $id);
 				$result["status"] = 200;
-				$result["msg"] = $module_res["msg"] ?: "硬关机成功";
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "硬关机成功");
 			} else {
 				hook("after_module_hard_off_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:硬关机失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 				$result["status"] = 406;
-				$result["msg"] = $module_res["msg"];
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "硬关机失败，请稍后重试或联系管理员");
 			}
 		}
 		return $result;
@@ -1113,12 +1128,12 @@ class Host
 				hook("after_module_hard_reboot", ["params" => $hook_data]);
 				active_log_final(sprintf("模块命令:硬重启成功#Host ID:%d", $id), $host["uid"], 2, $id);
 				$result["status"] = 200;
-				$result["msg"] = $module_res["msg"] ?: "硬重启成功";
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "硬重启成功");
 			} else {
 				hook("after_module_hard_reboot_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 				active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:硬重启失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 				$result["status"] = 406;
-				$result["msg"] = $module_res["msg"];
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "硬重启失败，请稍后重试或联系管理员");
 			}
 		}
 		return $result;
@@ -1175,20 +1190,24 @@ class Host
 		}
 		if ($module_res["status"] == "success" || $module_res["status"] == 200) {
 			active_log_final(sprintf("模块命令:vnc启动成功#Host ID:%d", $id), $host["uid"], 2, $id);
-			if ($host["api_type"] == "zjmf_api") {
-				$result = $module_res;
-				if ($host["type"] == "dcimcloud" && !$module_res["data"]["zjmfcloud_out_vnc"]) {
+			if (in_array($host["api_type"], ["zjmf_api", "resource"], true)) {
+				$result = ["status" => 200, "msg" => $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"], "vnc启动成功"), "data" => []];
+				$upstreamData = is_array($module_res["data"] ?? null) ? $module_res["data"] : [];
+				foreach (["url", "pass", "zjmfcloud_out_vnc"] as $field) {
+					if (array_key_exists($field, $upstreamData)) {
+						$result["data"][$field] = $upstreamData[$field];
+					}
+				}
+				if ($host["api_type"] == "zjmf_api" && $host["type"] == "dcimcloud" && empty($result["data"]["zjmfcloud_out_vnc"]) && !empty($result["data"]["url"])) {
 					if ($this->is_admin) {
 						$result["data"]["url"] = request()->domain() . "/" . config("database.admin_application") . "/dcim/novnc" . substr($result["data"]["url"], strpos($result["data"]["url"], "?url="));
 					} else {
 						$result["data"]["url"] = request()->domain() . "/dcim/novnc" . substr($result["data"]["url"], strpos($result["data"]["url"], "?url="));
 					}
 				}
-			} elseif ($host["api_type"] == "resource") {
-				return $module_res;
 			} else {
 				$result["status"] = 200;
-				$result["msg"] = $module_res["msg"] ?: "vnc启动成功";
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "vnc启动成功");
 				$result["data"]["url"] = $module_res["url"];
 				$result["data"]["pass"] = $module_res["pass"];
 				if ($host["type"] == "dcimcloud") {
@@ -1198,7 +1217,7 @@ class Host
 		} else {
 			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:vnc启动失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
-			$result["msg"] = $module_res["msg"];
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "控制台启动失败，请稍后重试或联系管理员");
 		}
 		return $result;
 	}
@@ -1323,12 +1342,12 @@ class Host
 			$new_host = \think\Db::name("host")->field("username")->where("id", $id)->find();
 			pushHostInfo($id);
 			$result["status"] = 200;
-			$result["msg"] = $module_res["msg"] ?: "重装系统发起成功";
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "重装系统发起成功");
 		} else {
 			hook("after_module_reinstall_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:重装系统发起失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
-			$result["msg"] = $module_res["msg"];
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "重装系统发起失败，请稍后重试或联系管理员");
 			if (isset($module_res["price"])) {
 				$result["price"] = $module_res["price"];
 			}
@@ -1418,7 +1437,7 @@ class Host
 				$result["data"] = $module_res["data"];
 			} else {
 				$result["status"] = 406;
-				$result["msg"] = $module_res["msg"];
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "获取电源状态失败，请稍后重试或联系管理员");
 			}
 		}
 		return $result;
@@ -1606,43 +1625,73 @@ class Host
 		} else {
 			$module_res = ["status" => 200];
 		}
-		if ($module_res["status"] == "success" || $module_res["status"] == 200) {
-			hook("after_module_change_package", ["params" => $hook_data]);
-			if ($host["api_type"] == "resource") {
-				$orders = \think\Db::name("orders")->alias("a")->field("a.id,a.supplier_id,a.invoiceid")->leftJoin("upgrades b", "a.id=b.order_id")->where("b.id", $upgrade_id)->find();
-				if (!empty($orders["supplier_id"])) {
-					$ids = explode(",", $orders["supplier_id"]);
-				} else {
-					$ids = [];
+			if ($module_res["status"] == "success" || $module_res["status"] == 200) {
+				$result["status"] = 200;
+				$result["msg"] = ClientActivityLog::clientSafeModuleError($module_res["msg"] ?? "", $host["api_type"] ?? "", $this->is_admin, "升降级成功");
+				try {
+					hook("after_module_change_package", ["params" => $hook_data]);
+				} catch (\Throwable $e) {
+					$this->recordInternalModuleDiagnostic("升降级已完成但后置钩子执行失败#Host ID:{$id} - 原因:" . $e->getMessage(), $host["uid"], $id, "module");
 				}
-				if (!empty($supplier_orderid)) {
-					if (!empty($ids[0])) {
-						array_push($ids, $supplier_orderid);
-					} else {
-						$ids[] = $supplier_orderid;
-					}
+					if ($host["api_type"] == "resource") {
+						$settlementResult = $this->syncResourceUpgradeSettlement($id, $upgrade_id, intval($supplier_orderid ?? 0));
+						if (($settlementResult["status"] ?? 400) != 200) {
+							$this->recordInternalModuleDiagnostic("升降级已完成但供应商结算信息同步失败#Host ID:{$id} - 原因:" . ($settlementResult["msg"] ?? "未知错误"), $host["uid"], $id, "supplier");
+							if (intval($upgrade_id) > 0) {
+								$data = ["host_id" => $id, "description" => "供应商升降级结算同步失败#Host ID:{$id}", "active_type_param" => [$id, intval($upgrade_id), intval($supplier_orderid ?? 0)]];
+								(new RunMap())->saveMap($data, 0, 300, 9, 3, false);
+							}
+						}
 				}
-				$id_str = implode(",", $ids);
-				\think\Db::name("orders")->where("id", $orders["id"])->update(["supplier_id" => $id_str]);
-				$post_data = [];
-				$post_data["ids"] = $ids;
-				$module_res = resourceCurl($host["productid"], "/host/upgradehost", $post_data, 30, "GET");
-				if ($module_res["status"] == 200) {
-					$current_rate = \think\Db::name("host")->alias("a")->leftJoin("res_products b", "a.productid=b.productid")->where("a.id", $id)->value("b.current_rate");
-					\think\Db::name("invoices")->where("id", $orders["invoiceid"])->update(["cost" => bcmul($module_res["data"]["order_amount"], $current_rate, 20)]);
+				try {
+					pushHostInfo($id);
+				} catch (\Throwable $e) {
+					$this->recordInternalModuleDiagnostic("升降级已完成但下游状态推送失败#Host ID:{$id} - 原因:" . $e->getMessage(), $host["uid"], $id, "module");
 				}
-			}
-			pushHostInfo($id);
-			$result["status"] = 200;
-			$result["msg"] = $module_res["msg"] ?: "成功";
 		} else {
 			hook("after_module_change_package_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 			$result["status"] = 406;
-			$result["msg"] = $module_res["msg"];
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "升降级失败，请稍后重试或联系管理员");
 		}
-		return $result;
-	}
-	public function crackPass($id, $new_pass = "")
+			return $result;
+		}
+		public function syncResourceUpgradeSettlement($id, $upgrade_id, $supplier_orderid = 0)
+		{
+			try {
+				$host = \think\Db::name("host")->alias("a")->field("a.id,a.productid,b.api_type")->leftJoin("products b", "a.productid=b.id")->where("a.id", intval($id))->find();
+				if (empty($host) || $host["api_type"] !== "resource") {
+					throw new \RuntimeException("资源池产品不存在");
+				}
+				$orders = \think\Db::name("orders")->alias("a")->field("a.id,a.supplier_id,a.invoiceid")->leftJoin("upgrades b", "a.id=b.order_id")->where("b.id", intval($upgrade_id))->find();
+				if (empty($orders["id"])) {
+					throw new \RuntimeException("未找到升降级订单");
+				}
+				$ids = empty($orders["supplier_id"]) ? [] : explode(",", $orders["supplier_id"]);
+				$ids = array_values(array_unique(array_filter(array_map("intval", $ids))));
+				if (intval($supplier_orderid) > 0) {
+					$ids[] = intval($supplier_orderid);
+					$ids = array_values(array_unique($ids));
+				}
+				if (empty($ids)) {
+					throw new \RuntimeException("供应商订单号为空");
+				}
+				\think\Db::name("orders")->where("id", $orders["id"])->update(["supplier_id" => implode(",", $ids)]);
+				$response = resourceCurl($host["productid"], "/host/upgradehost", ["ids" => $ids], 30, "GET");
+				if (($response["status"] ?? 400) != 200) {
+					throw new \RuntimeException($response["msg"] ?? "未知错误");
+				}
+				$current_rate = \think\Db::name("host")->alias("a")->leftJoin("res_products b", "a.productid=b.productid")->where("a.id", intval($id))->value("b.current_rate");
+				$order_amount = $response["data"]["order_amount"] ?? null;
+				if ($order_amount === null || $current_rate === null) {
+					throw new \RuntimeException("供应商结算响应缺少金额或汇率");
+				}
+				\think\Db::name("invoices")->where("id", $orders["invoiceid"])->update(["cost" => bcmul($order_amount, $current_rate, 20)]);
+				return ["status" => 200, "msg" => "供应商结算同步成功"];
+			} catch (\Throwable $e) {
+				return ["status" => 400, "msg" => $e->getMessage()];
+			}
+		}
+		public function crackPass($id, $new_pass = "")
 	{
 		$host = \think\Db::name("host")->alias("a")->field("a.id,a.uid,a.productid,a.domainstatus,a.uid,a.dcimid,b.server_type,b.type,b.api_type,b.zjmf_api_id,c.email,b.server_group,b.config_option1")->leftJoin("products b", "a.productid=b.id")->leftJoin("clients c", "a.uid=c.id")->where("a.id", $id)->find();
 		if (empty($host)) {
@@ -1723,12 +1772,12 @@ class Host
 			}
 			active_log_final(sprintf("模块命令:重置密码成功#Host ID:%d", $id), $host["uid"], 2, $id);
 			$result["status"] = 200;
-			$result["msg"] = $module_res["msg"] ?: "重置密码成功";
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "重置密码成功");
 		} else {
 			hook("after_module_crack_password_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:重置密码失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
-			$result["msg"] = $module_res["msg"];
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "重置密码失败，请稍后重试或联系管理员");
 		}
 		return $result;
 	}
@@ -1761,7 +1810,7 @@ class Host
 				$result["data"] = $module_res["data"];
 			} else {
 				$result["status"] = 406;
-				$result["msg"] = $module_res["msg"];
+				$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "打开管理面板失败，请稍后重试或联系管理员");
 			}
 		}
 		return $result;
@@ -1853,11 +1902,11 @@ class Host
 				}
 			}
 			$result["status"] = 200;
-			$result["msg"] = $module_res["msg"] ?: "模块续费后操作执行成功";
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "模块续费后操作执行成功");
 		} else {
 			hook("after_module_renew_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 			$result["status"] = 406;
-			$result["msg"] = $module_res["msg"];
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "续费操作失败，请稍后重试或联系管理员");
 		}
 		return $result;
 	}
@@ -2010,12 +2059,12 @@ class Host
 			hook("after_module_rescue_system", ["params" => $hook_data]);
 			active_log_final(sprintf("模块命令:救援系统发起成功#Host ID:%d", $id), $host["uid"], 2, $id);
 			$result["status"] = 200;
-			$result["msg"] = $module_res["msg"] ?: "救援系统发起成功";
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "救援系统发起成功");
 		} else {
 			hook("after_module_rescue_system_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:救援系统发起失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
 			$result["status"] = 406;
-			$result["msg"] = $module_res["msg"];
+			$result["msg"] = $this->moduleErrorForClient($module_res["msg"], $host["api_type"] ?? "", "救援系统发起失败，请稍后重试或联系管理员");
 		}
 		return $result;
 	}

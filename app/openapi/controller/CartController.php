@@ -398,9 +398,10 @@ class CartController extends \cmf\controller\HomeBaseController
 				if (empty($upstream_data["product"])) {
 					return json(["status" => 400, "msg" => "Inventory shortage"]);
 				}
-				if ($upstream_data["product"]["hidden"] == 1) {
-					\think\Db::name("products")->where("id", $pid)->update(["hidden" => 1]);
-					return json(["status" => 400, "msg" => "Product does not exist"]);
+					if ($upstream_data["product"]["hidden"] == 1) {
+						\think\Db::name("products")->where("id", $pid)->update(["hidden" => 1]);
+						(new \app\common\logic\Product())->invalidateCacheOrMarkDirty([$pid], "upstream product hidden in openapi cart");
+						return json(["status" => 400, "msg" => "Product does not exist"]);
 				}
 				if ($upstream_data["product"]["stock_control"] && $upstream_data["product"]["qty"] <= 0) {
 					return json(["status" => 400, "msg" => "Inventory shortage"]);
@@ -1213,7 +1214,8 @@ class CartController extends \cmf\controller\HomeBaseController
 			$downstream_data = input("post.");
 			$is_downstream = (strpos($downstream_data["downstream_url"], "https://") === 0 || strpos($downstream_data["downstream_url"], "http://") === 0) && strlen($downstream_data["downstream_token"]) == 32 && is_numeric($downstream_data["downstream_id"]);
 		}
-		\think\Db::startTrans();
+			$inventory_product_ids = [];
+			\think\Db::startTrans();
 		try {
 			if (!empty($create_invoice)) {
 				$invoiceid = \think\Db::name("invoices")->insertGetId($invoices_data);
@@ -1311,7 +1313,10 @@ class CartController extends \cmf\controller\HomeBaseController
 						\think\Db::name("customfieldsvalues")->insertAll($customfields);
 					}
 				}
-				\think\Db::name("products")->where("id", $v["productid"])->where("stock_control", 1)->setDec("qty", $qtys);
+					\think\Db::name("products")->where("id", $v["productid"])->where("stock_control", 1)->setDec("qty", $qtys);
+					if ($r["stock_control"] == 1) {
+						$inventory_product_ids[] = intval($v["productid"]);
+					}
 			}
 			\think\Db::name("cart_session")->where("uid", $uid)->update(["cart_data" => $new_cart_data, "update_time" => time()]);
 			if (!empty($promo)) {
@@ -1371,9 +1376,12 @@ class CartController extends \cmf\controller\HomeBaseController
 			$result["msg"] = $e->getMessage();
 			\think\Db::rollback();
 		}
-		if ($result["status"] != 200) {
-			return json($result);
-		}
+			if ($result["status"] != 200) {
+				return json($result);
+			}
+			if (!empty($inventory_product_ids)) {
+				(new \app\common\logic\Product())->refreshInventoryCache($inventory_product_ids, "openapi cart order commit");
+			}
 		$curl_multi_data = [];
 		if ($subtotal != 0) {
 			foreach ($hids as $h) {
@@ -1547,17 +1555,7 @@ class CartController extends \cmf\controller\HomeBaseController
 			$alloption = $this->handleLinkAgeLevel($alloption);
 			$alloption = $this->handleTreeArr($alloption);
 			$cids = \think\Db::name("product_config_options")->alias("a")->field("a.id")->leftJoin("product_config_links b", "b.gid = a.gid")->leftJoin("product_config_groups c", "a.gid = c.id")->where("b.pid", $pid)->order("a.order", "asc")->order("a.id", "asc")->column("a.id");
-			$links = \think\Db::name("product_config_options_links")->whereIN("config_id", $cids)->where("type", "condition")->where("relation_id", 0)->withAttr("sub_id", function ($value) {
-				return json_decode($value, true);
-			})->select()->toArray();
-			if (!empty($links[0])) {
-				foreach ($links as &$link) {
-					$result = \think\Db::name("product_config_options_links")->where("relation_id", $link["id"])->withAttr("sub_id", function ($value) {
-						return json_decode($value, true);
-					})->select()->toArray();
-					$link["result"] = $result;
-				}
-			}
+			$links = (new \app\common\model\SeniorConfModel())->getProductUseConfLinksDetailMap($cids);
 			$data["option"] = $alloption;
 			$data["links"] = $links;
 		}
@@ -1970,9 +1968,10 @@ class CartController extends \cmf\controller\HomeBaseController
 				if (empty($upstream_data["product"])) {
 					return json(["status" => 400, "msg" => "商品缺货"]);
 				}
-				if ($upstream_data["product"]["hidden"] == 1) {
-					\think\Db::name("products")->where("id", $pid)->update(["hidden" => 1]);
-					return json(["status" => 400, "msg" => "商品不存在"]);
+					if ($upstream_data["product"]["hidden"] == 1) {
+						\think\Db::name("products")->where("id", $pid)->update(["hidden" => 1]);
+						(new \app\common\logic\Product())->invalidateCacheOrMarkDirty([$pid], "upstream product hidden in openapi cart");
+						return json(["status" => 400, "msg" => "商品不存在"]);
 				}
 				if ($upstream_data["product"]["stock_control"] && $upstream_data["product"]["qty"] <= 0) {
 					return json(["status" => 400, "msg" => lang("CART_SETTLE_PRO_STOCK_CONTROL", [$product["name"]])]);
@@ -2039,17 +2038,7 @@ class CartController extends \cmf\controller\HomeBaseController
 			$alloption = $this->handleLinkAgeLevel($alloption);
 			$alloption = $this->handleTreeArr($alloption);
 			$cids = \think\Db::name("product_config_options")->alias("a")->field("a.id")->leftJoin("product_config_links b", "b.gid = a.gid")->leftJoin("product_config_groups c", "a.gid = c.id")->where("b.pid", $pid)->order("a.order", "asc")->order("a.id", "asc")->column("a.id");
-			$links = \think\Db::name("product_config_options_links")->whereIN("config_id", $cids)->where("type", "condition")->where("relation_id", 0)->withAttr("sub_id", function ($value) {
-				return json_decode($value, true);
-			})->select()->toArray();
-			if (!empty($links[0])) {
-				foreach ($links as &$link) {
-					$result = \think\Db::name("product_config_options_links")->where("relation_id", $link["id"])->withAttr("sub_id", function ($value) {
-						return json_decode($value, true);
-					})->select()->toArray();
-					$link["result"] = $result;
-				}
-			}
+			$links = (new \app\common\model\SeniorConfModel())->getProductUseConfLinksDetailMap($cids);
 			$data["option"] = $alloption;
 			$data["links"] = $links;
 		}

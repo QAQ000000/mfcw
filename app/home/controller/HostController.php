@@ -2854,7 +2854,24 @@ class HostController extends CommonController
 			$post_data["id"] = $host["dcimid"];
 			$post_data["start"] = $start;
 			$post_data["end"] = $end;
-			$result = zjmfCurl($host["zjmf_api_id"], "/host/trafficusage", $post_data, 30, "GET");
+			$upstream = zjmfCurl($host["zjmf_api_id"], "/host/trafficusage", $post_data, 30, "GET");
+			if (($upstream["status"] ?? 400) == 200) {
+				$result = ["status" => 200, "msg" => "获取用量信息成功", "data" => []];
+				foreach (($upstream["data"] ?? []) as $item) {
+					if (is_array($item)) {
+						$point = [];
+						foreach (["time", "value", "in", "out"] as $field) {
+							if (array_key_exists($field, $item)) {
+								$point[$field] = $item[$field];
+							}
+						}
+						$result["data"][] = $point;
+					}
+				}
+			} else {
+				$dcim = new \app\common\logic\Dcim();
+				$result = $dcim->supplierFailureForClient($upstream, $uid, $id, "获取用量信息", "获取用量信息失败，请稍后重试或联系管理员");
+			}
 		} else {
 			if ($host["type"] == "dcim") {
 				$dcim = new \app\common\logic\Dcim();

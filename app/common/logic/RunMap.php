@@ -13,7 +13,7 @@ class RunMap
 	 * @param int $from_active  执行端（1后端管理员、2客户端、3系统）
 	 * @return bool
 	 */
-	public function saveMap($data, $status, $from_type, $active_type, $from_active = 3)
+	public function saveMap($data, $status, $from_type, $active_type, $from_active = 3, $replaceExisting = true)
 	{
 		$jwt = userGetCookie();
 		$user_id = \think\facade\Cache::get("client_user_login_token_" . $jwt);
@@ -56,7 +56,7 @@ class RunMap
 		$rm_model = new \app\admin\model\RunMapModel();
 		try {
 			$res = $rm_model->checkOnlyOne($data_i["host_id"], $data_i["active_type"]);
-			if ($res) {
+			if (!$replaceExisting || $res) {
 				$rm_model->add($data_i);
 			} else {
 				$rm_model->edit($data_i);

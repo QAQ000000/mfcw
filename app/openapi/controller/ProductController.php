@@ -787,17 +787,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 			$hostFilters = $this->handleLinkAgeLevel($hostFilters);
 			$hostFilters = $this->handleTreeArr($hostFilters);
 			$cids = \think\Db::name("product_config_options")->alias("a")->field("a.id")->leftJoin("product_config_links b", "b.gid = a.gid")->leftJoin("product_config_groups c", "a.gid = c.id")->where("b.pid", $pid)->order("a.order", "asc")->order("a.id", "asc")->column("a.id");
-			$links = \think\Db::name("product_config_options_links")->whereIN("config_id", $cids)->where("type", "condition")->where("relation_id", 0)->withAttr("sub_id", function ($value) {
-				return json_decode($value, true);
-			})->select()->toArray();
-			if (!empty($links[0])) {
-				foreach ($links as &$link) {
-					$result = \think\Db::name("product_config_options_links")->where("relation_id", $link["id"])->withAttr("sub_id", function ($value) {
-						return json_decode($value, true);
-					})->select()->toArray();
-					$link["result"] = $result;
-				}
-			}
+			$links = (new \app\common\model\SeniorConfModel())->getProductUseConfLinksDetailMap($cids);
 			if ($links) {
 				$hostconfigoptions = \think\Db::name("host")->alias("h")->field("hco.qty,hco.configid,hco.optionid,pco.hidden,pco.upgrade")->leftJoin("host_config_options hco", "h.id = hco.relid")->leftJoin("product_config_options pco", "pco.id = hco.configid")->where("h.id", $hid)->where("h.uid", $uid)->select()->toArray();
 				$links_config_id = array_column($links, "config_id");

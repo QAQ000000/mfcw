@@ -237,12 +237,14 @@ class HostController
 					$email = new \app\common\logic\Email();
 					$email->sendEmail($host["welcome_email"], $id, !empty($ip) ? $ip : get_client_ip6());
 				}
-				active_log_final(sprintf("开通host - User ID:%d - Host ID:%d - 服务器模块:%s - 接口:%s - IP:%s - 成功", $host["uid"], $id, $server_groups["name"], $servers["name"], $host["dedicatedip"]), $host["uid"], 2, $id);
+				$description = sprintf("开通host - User ID:%d - Host ID:%d - 服务器模块:%s - 接口:%s - IP:%s - 成功", $host["uid"], $id, $server_groups["name"], $servers["name"], $host["dedicatedip"]);
+				active_log_final(\app\common\logic\ClientActivityLog::markInternal($description, "supplier"), $host["uid"], 2, $id);
 				$data_i["description"] = "订单 - 开通 Host ID:{$data_i["host_id"]}的产品成功";
 				$logic_run_map->saveMap($data_i, 1, 400, 1);
 			} else {
 				if ($params["domainstatus"] == "Pending") {
-					active_log_final(sprintf("模块命令:开通host - User ID:%d - Host ID:%d - 失败 - 原因：%s", $host["uid"], $id, "上游开通失败"), $host["uid"], 2, $id);
+					$description = sprintf("模块命令:开通host - User ID:%d - Host ID:%d - 失败 - 原因：%s", $host["uid"], $id, "上游开通失败");
+					active_log_final(\app\common\logic\ClientActivityLog::markInternal($description, "supplier"), $host["uid"], 2, $id);
 					$data_i["description"] = "订单 - 开通 Host ID:{$data_i["host_id"]}的产品失败。原因:上游开通失败";
 					$logic_run_map->saveMap($data_i, 0, 400, 1);
 					$result["status"] = 200;

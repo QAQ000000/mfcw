@@ -3,6 +3,9 @@ $database = include "../../app/config/database.php";
 $host = $database['hostname'];
 $dbname = $database['database'];
 $prefix = $database['prefix']??"shd_";
+if (!preg_match('/^[a-z0-9_]+$/i', $prefix)) {
+    die("Error!: invalid database table prefix<br/>");
+}
 $user = $database['username'];
 $pass = $database['password'];
 $defaultCharset = 'utf8mb4';
@@ -10,7 +13,10 @@ $charset = $database['charset'];
 $defaultTablePre = 'shd_';
 $port = $database['hostport'];
 try{
-    $opts_values = array(PDO::MYSQL_ATTR_INIT_COMMAND=>'SET NAMES utf8');
+    $opts_values = array(
+        PDO::MYSQL_ATTR_INIT_COMMAND => 'SET NAMES utf8',
+        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+    );
     $dbObject = new PDO("mysql:host={$host};port={$port};dbname={$dbname}",$user,$pass,$opts_values);
 }catch (PDOException $e){
     print "Error!: " . $e->getMessage() . "<br/>";
@@ -80,6 +86,16 @@ if (version_compare($last_version,$version,'>')){
             }
         }
     }
+}
+if (version_compare($last_version, '3.5.8.1', '>=')) {
+    $visibilityColumn = $dbObject->query("SHOW COLUMNS FROM `{$prefix}activity_log` LIKE 'client_visible'")->fetch(PDO::FETCH_ASSOC);
+    if (!$visibilityColumn || (string) $visibilityColumn['Default'] !== '0') {
+        die("数据库升级校验失败，版本号未更新<br/>");
+    }
+	$dirtyRows = $dbObject->query("SELECT COUNT(*) FROM `{$prefix}configuration` WHERE `setting` = '_product_catalog_cache_dirty'")->fetchColumn();
+	if ((int) $dirtyRows !== 1) {
+		die("商品缓存升级校验失败，版本号未更新<br/>");
+	}
 }
 if ($system_version_type[0]['value'] && $system_version_type[0]['value'] == 'beta'){ # 内测版
     $update_sql_beta = "update " . $prefix . "configuration set value='{$last_version}' where setting = 'beta_version'";
