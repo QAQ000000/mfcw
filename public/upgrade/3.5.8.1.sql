@@ -137,26 +137,18 @@ WHERE `id` <= @activity_log_legacy_cutoff_id
       OR `description` LIKE 'Cron_开通host%服务器模块:%接口:%IP:%'
   );
 
--- Keep one durable retry generation. Any non-zero duplicate means a previous
--- cache mutation still needs to be retried.
-START TRANSACTION;
-SET @product_catalog_cache_was_dirty = (
-    SELECT COUNT(*)
-    FROM `shd_configuration`
-    WHERE `setting` = '_product_catalog_cache_dirty'
-      AND `value` NOT IN ('', '0')
-    FOR UPDATE
-);
-DELETE FROM `shd_configuration`
-WHERE `setting` = '_product_catalog_cache_dirty';
-INSERT INTO `shd_configuration` (`setting`, `value`, `create_time`, `update_time`)
-VALUES (
-    '_product_catalog_cache_dirty',
-    IF(@product_catalog_cache_was_dirty > 0, CONCAT('migration-', UNIX_TIMESTAMP(), '-', CONNECTION_ID()), '0'),
-    UNIX_TIMESTAMP(),
-    UNIX_TIMESTAMP()
-);
-COMMIT WORK;
+CREATE TABLE IF NOT EXISTS `shd_product_catalog_cache_pending` (
+    `pid` int(10) unsigned NOT NULL,
+    `generation` varchar(64) NOT NULL DEFAULT '',
+    `create_time` int(10) unsigned NOT NULL DEFAULT 0,
+    `update_time` int(10) unsigned NOT NULL DEFAULT 0,
+    PRIMARY KEY (`pid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Existing JSON rows are intentionally retained. Product::retryDirtyCacheInvalidation
+-- parses them in PHP, batches deleted IDs into this table, and then atomically
+-- collapses the configuration rows. This avoids locking configuration while
+-- repeatedly parsing a near-TEXT-limit JSON document in MySQL 5.7.
 
 SELECT RELEASE_LOCK('_migration_20260729_activity_visibility')
 INTO @client_visibility_migration_lock_released;

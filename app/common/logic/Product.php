@@ -8,6 +8,7 @@ class Product
 	private $detail_name = "shd_all_products_detail_";
 	private $info_name = "shd_all_products_info";
 	private $cache_dirty_setting = "_product_catalog_cache_dirty";
+	private $cache_pending_table = "product_catalog_cache_pending";
 	public $concurrent = 500;
 	public $cron_max = 10;
 	public function getProducts($pids = [])
@@ -232,13 +233,16 @@ class Product
 			$now = time();
 			\think\Db::startTrans();
 			try {
-				$row = \think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->lock(true)->find();
-				$dirtyValue = $this->mergeCatalogDirtyState($row["value"] ?? "0", $generation, $pids);
-				if (!empty($row)) {
-					\think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->update(["value" => $dirtyValue, "update_time" => $now]);
+				$rows = $this->catalogDirtyRows(true);
+				$dirtyState = $this->mergeCatalogDirtyState(array_column($rows, "value"), $generation, $pids);
+				if ($this->pendingTableExists()) {
+					$this->storePendingProductIds($dirtyState["pids"], $generation, $now);
+					$dirtyRows = [["setting" => $this->cache_dirty_setting, "value" => $dirtyState["generation"], "create_time" => $now, "update_time" => $now]];
 				} else {
-					\think\Db::name("configuration")->insert(["setting" => $this->cache_dirty_setting, "value" => $dirtyValue, "create_time" => $now, "update_time" => $now]);
+					$dirtyRows = $this->buildCatalogDirtyFallbackRows($dirtyState["generation"], $dirtyState["pids"], $now);
 				}
+				\think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->delete();
+				\think\Db::name("configuration")->insertAll($dirtyRows);
 				\think\Db::commit();
 			} catch (\Throwable $e) {
 				\think\Db::rollback();
@@ -253,14 +257,93 @@ class Product
 	}
 	private function mergeCatalogDirtyState($currentValue, $generation, $pids)
 	{
-		$current = $this->decodeCatalogDirtyState($currentValue);
-		$current["generation"] = (string) $generation;
-		$current["pids"] = $this->normalizeProductIds(array_merge($current["pids"], (array) $pids));
-		$encoded = json_encode($current);
-		if ($encoded === false) {
-			throw new \RuntimeException("商品缓存重试状态编码失败");
+		$currentPids = [];
+		foreach ((array) $currentValue as $value) {
+			$current = $this->decodeCatalogDirtyState($value);
+			$currentPids = array_merge($currentPids, $current["pids"]);
 		}
-		return $encoded;
+		return [
+			"generation" => (string) $generation,
+			"pids" => $this->findDeletedProductIds(array_merge($currentPids, (array) $pids)),
+		];
+	}
+	private function catalogDirtyRows($lock = false)
+	{
+		$query = \think\Db::name("configuration")->where("setting", $this->cache_dirty_setting);
+		if ($lock) {
+			$query->lock(true);
+		}
+		return $query->select()->toArray();
+	}
+	private function catalogDirtyValues($rows)
+	{
+		$values = array_map(function ($row) {
+			return (string) ($row["value"] ?? "");
+		}, (array) $rows);
+		sort($values, SORT_STRING);
+		return $values;
+	}
+	protected function findDeletedProductIds($pids)
+	{
+		$pids = $this->normalizeProductIds($pids);
+		if (empty($pids)) {
+			return [];
+		}
+		$existing = [];
+		foreach (array_chunk($pids, 1000) as $chunk) {
+			$ids = \think\Db::name("products")->whereIn("id", $chunk)->column("id");
+			foreach ((array) $ids as $id) {
+				$existing[intval($id)] = true;
+			}
+		}
+		return array_values(array_filter($pids, function ($pid) use($existing) {
+			return !isset($existing[$pid]);
+		}));
+	}
+	private function storePendingProductIds($pids, $generation, $now)
+	{
+		foreach (array_chunk($this->normalizeProductIds($pids), 1000) as $chunk) {
+			$rows = [];
+			foreach ($chunk as $pid) {
+				$rows[] = ["pid" => $pid, "generation" => (string) $generation, "create_time" => $now, "update_time" => $now];
+			}
+			\think\Db::name($this->cache_pending_table)->insertAll($rows, true);
+		}
+	}
+	private function pendingTableExists()
+	{
+		$table = \think\Db::name($this->cache_pending_table)->getTable();
+		$result = \think\Db::query("SELECT COUNT(*) AS `count` FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?", [$table]);
+		return intval($result[0]["count"] ?? 0) === 1;
+	}
+	private function buildCatalogDirtyFallbackRows($generation, $pids, $now)
+	{
+		$chunks = array_chunk($this->normalizeProductIds($pids), 4000);
+		if (empty($chunks)) {
+			$chunks = [[]];
+		}
+		$rows = [];
+		foreach ($chunks as $chunk) {
+			$value = json_encode(["generation" => (string) $generation, "pids" => $chunk]);
+			if ($value === false || strlen($value) > 60000) {
+				throw new \RuntimeException("商品缓存重试状态超出安全长度");
+			}
+			$rows[] = ["setting" => $this->cache_dirty_setting, "value" => $value, "create_time" => $now, "update_time" => $now];
+		}
+		return $rows;
+	}
+	private function pendingProductIds()
+	{
+		if (!$this->pendingTableExists()) {
+			return [];
+		}
+		return $this->normalizeProductIds(\think\Db::name($this->cache_pending_table)->column("pid"));
+	}
+	private function deletePendingProductIds($pids)
+	{
+		foreach (array_chunk($this->normalizeProductIds($pids), 1000) as $chunk) {
+			\think\Db::name($this->cache_pending_table)->whereIn("pid", $chunk)->delete();
+		}
 	}
 	private function decodeCatalogDirtyState($value)
 	{
@@ -283,18 +366,39 @@ class Product
 			return false;
 		}
 		try {
-			$dirtyValue = (string) \think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->value("value");
-			if ($dirtyValue === "" || $dirtyValue === "0") {
+			$dirtyRows = $this->catalogDirtyRows();
+			$dirtyValues = $this->catalogDirtyValues($dirtyRows);
+			$dirtyValue = $dirtyValues[0] ?? "0";
+			$pendingPids = $this->pendingProductIds();
+			$hasDirtyGeneration = !empty(array_filter($dirtyValues, function ($value) {
+				return $value !== "" && $value !== "0";
+			}));
+			if (!$hasDirtyGeneration && empty($pendingPids)) {
 				return true;
 			}
-			$dirtyState = $this->decodeCatalogDirtyState($dirtyValue);
+			$dirtyState = $this->mergeCatalogDirtyState($dirtyValues, $dirtyValue, []);
 			$currentPids = \think\Db::name("products")->column("id");
-			$pids = $this->normalizeProductIds(array_merge($currentPids ?: [], $dirtyState["pids"]));
+			$pids = $this->normalizeProductIds(array_merge($currentPids ?: [], $dirtyState["pids"], $pendingPids));
 			if ($this->invalidateCache($pids) !== true) {
 				return false;
 			}
-			$cleared = \think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->where("value", $dirtyValue)->update(["value" => 0, "update_time" => time()]);
-			return $cleared > 0;
+			\think\Db::startTrans();
+			try {
+				$currentDirtyRows = $this->catalogDirtyRows(true);
+				if ($this->catalogDirtyValues($currentDirtyRows) !== $dirtyValues) {
+					\think\Db::rollback();
+					return false;
+				}
+				$this->deletePendingProductIds($pendingPids);
+				$now = time();
+				\think\Db::name("configuration")->where("setting", $this->cache_dirty_setting)->delete();
+				\think\Db::name("configuration")->insert(["setting" => $this->cache_dirty_setting, "value" => 0, "create_time" => $now, "update_time" => $now]);
+				\think\Db::commit();
+				return true;
+			} catch (\Throwable $e) {
+				\think\Db::rollback();
+				throw $e;
+			}
 		} catch (\Throwable $e) {
 			error_log("Failed to retry product catalog cache invalidation: " . $e->getMessage());
 			return false;

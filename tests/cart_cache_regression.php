@@ -23,6 +23,21 @@ if (!function_exists("active_log_final")) {
 
 class TestableCartProductLogic extends \app\common\logic\Product
 {
+	public $existingProductIds = [];
+
+	protected function findDeletedProductIds($pids)
+	{
+		$existing = array_fill_keys(array_map("intval", $this->existingProductIds), true);
+		$deleted = [];
+		foreach (array_unique(array_map("intval", (array) $pids)) as $pid) {
+			if ($pid > 0 && !isset($existing[$pid])) {
+				$deleted[] = $pid;
+			}
+		}
+		sort($deleted, SORT_NUMERIC);
+		return $deleted;
+	}
+
 	public function acquire($pid, $lease)
 	{
 		return $this->acquireCartSyncLock($pid, $lease);
@@ -95,17 +110,37 @@ $decodeDirtyState = $productReflection->getMethod("decodeCatalogDirtyState");
 $decodeDirtyState->setAccessible(true);
 $mergeDirtyState = $productReflection->getMethod("mergeCatalogDirtyState");
 $mergeDirtyState->setAccessible(true);
+$buildDirtyFallbackRows = $productReflection->getMethod("buildCatalogDirtyFallbackRows");
+$buildDirtyFallbackRows->setAccessible(true);
 assertTrue(
 	$decodeDirtyState->invoke($logic, "legacy-generation") === ["generation" => "legacy-generation", "pids" => []],
 	"legacy dirty generations must remain retryable"
 );
-$mergedDirtyState = json_decode($mergeDirtyState->invoke(
+$logic->existingProductIds = [77, 999];
+$mergedDirtyState = $mergeDirtyState->invoke(
 	$logic,
 	json_encode(["generation" => "first", "pids" => [42, 77]]),
 	"second",
 	[77, 999]
-), true);
-assertTrue($mergedDirtyState === ["generation" => "second", "pids" => [42, 77, 999]], "dirty retries must retain the union of affected product IDs");
+);
+assertTrue($mergedDirtyState === ["generation" => "second", "pids" => [42]], "dirty retries must retain deleted IDs without persisting current products");
+$logic->existingProductIds = range(1, 13000);
+$largeDirtyState = $mergeDirtyState->invoke($logic, "0", "large-catalog", range(1, 13000));
+assertTrue($largeDirtyState === ["generation" => "large-catalog", "pids" => []], "large current catalogs must not be copied into the pending set");
+assertTrue(strlen($largeDirtyState["generation"]) < 1024, "the dirty generation must remain safely below the configuration TEXT limit");
+$logic->existingProductIds = range(1, 13000);
+$deletedDirtyData = $mergeDirtyState->invoke($logic, "0", "deleted-product", [7, 14001]);
+assertTrue($deletedDirtyData === ["generation" => "deleted-product", "pids" => [14001]], "deleted product IDs must remain durable for later cache cleanup");
+$fallbackPids = range(100000, 112999);
+$fallbackRows = $buildDirtyFallbackRows->invoke($logic, "upgrade-window", $fallbackPids, 123);
+$fallbackRestoredPids = [];
+foreach ($fallbackRows as $row) {
+	assertTrue(strlen($row["value"]) <= 60000, "fallback dirty rows must remain below the configuration TEXT limit");
+	$fallbackState = json_decode($row["value"], true);
+	$fallbackRestoredPids = array_merge($fallbackRestoredPids, $fallbackState["pids"]);
+}
+assertTrue($fallbackRestoredPids === $fallbackPids, "upgrade-window fallback rows must retain every deleted product ID");
+assertTrue(count($fallbackRows) === 4, "large fallback state must be split into bounded configuration rows");
 $previousUmask = umask(0022);
 $first = $logic->acquire(42, 20);
 umask($previousUmask);
@@ -173,8 +208,14 @@ sourceContains($root . "/app/common/logic/Product.php", [
 	'return $this->acquireFileLock("catalog-cache", "catalog", 120, $nonBlocking, $nonBlocking ? 0 : 5);',
 	'$this->markCatalogCacheDirty($context, $error, $pids);',
 	'public function retryDirtyCacheInvalidation()',
-	'$this->mergeCatalogDirtyState($row["value"] ?? "0", $generation, $pids)',
-	'array_merge($currentPids ?: [], $dirtyState["pids"])',
+	'$this->mergeCatalogDirtyState(array_column($rows, "value"), $generation, $pids)',
+	'$this->storePendingProductIds($dirtyState["pids"], $generation, $now)',
+	'$this->buildCatalogDirtyFallbackRows($dirtyState["generation"], $dirtyState["pids"], $now)',
+	'if (!$this->pendingTableExists())',
+	'$this->findDeletedProductIds(array_merge($currentPids, (array) $pids))',
+	'foreach (array_chunk($pids, 1000) as $chunk)',
+	'array_merge($currentPids ?: [], $dirtyState["pids"], $pendingPids)',
+	'$this->deletePendingProductIds($pendingPids);',
 	'$this->updateInfoCacheUnlocked()',
 	'$this->updateDetailCacheUnlocked($pids)',
 	'$this->updateListCacheUnlocked([], true)',
@@ -189,6 +230,23 @@ preg_match('/public function updateCache\(.*?public function invalidateCache/s',
 assertTrue(strpos($updateCacheMethod[0], '$this->invalidateCache(') === false, "updateCache must not reacquire the catalog lock");
 assertTrue(strpos($updateCacheMethod[0], 'Unlocked(') !== false, "updateCache must use lock-free internal builders while holding the catalog lock");
 assertTrue(strpos($updateCacheMethod[0], 'markCatalogCacheDirty') !== false, "updateCache must persist a retry marker when any caller ignores its return value");
+preg_match('/private function markCatalogCacheDirty\(.*?private function mergeCatalogDirtyState/s', $productSource, $markDirtyMethod);
+$markLockPosition = strpos($markDirtyMethod[0], '$this->catalogDirtyRows(true)');
+$pendingWritePosition = strpos($markDirtyMethod[0], '$this->storePendingProductIds(');
+assertTrue(
+	$markLockPosition !== false && $pendingWritePosition !== false && $markLockPosition < $pendingWritePosition,
+	"dirty writers must lock the generation row before changing pending IDs"
+);
+preg_match('/public function retryDirtyCacheInvalidation\(.*?private function invalidateCacheUnlocked/s', $productSource, $retryDirtyMethod);
+$retryTransactionPosition = strpos($retryDirtyMethod[0], '\\think\\Db::startTrans()');
+$retryLockPosition = strpos($retryDirtyMethod[0], '$this->catalogDirtyRows(true)');
+$pendingDeletePosition = strpos($retryDirtyMethod[0], '$this->deletePendingProductIds($pendingPids)');
+$generationClearPosition = strpos($retryDirtyMethod[0], '->insert(["setting" => $this->cache_dirty_setting, "value" => 0');
+assertTrue(
+	$retryTransactionPosition !== false && $retryLockPosition > $retryTransactionPosition
+	&& $pendingDeletePosition > $retryLockPosition && $generationClearPosition > $pendingDeletePosition,
+	"retry cleanup must remove pending IDs and clear the generation atomically while holding the generation lock"
+);
 preg_match('/private function invalidateCacheUnlocked\(.*?private function deleteCacheKey/s', $productSource, $invalidateMethod);
 $infoDeletePosition = strpos($invalidateMethod[0], '$this->deleteInfoCacheUnlocked()');
 $listDeletePosition = strpos($invalidateMethod[0], '$this->deleteListCacheUnlocked()');
@@ -262,23 +320,33 @@ sourceContains($root . "/app/common.php", [
 	') === true;',
 ]);
 sourceContains($root . "/public/upgrade/3.5.8.1.sql", [
-	"START TRANSACTION;",
-	"DELETE FROM `shd_configuration`",
-	"'_product_catalog_cache_dirty'",
-	"@product_catalog_cache_was_dirty",
-	"FOR UPDATE",
-	"COMMIT WORK;",
+	"CREATE TABLE IF NOT EXISTS `shd_product_catalog_cache_pending`",
+	"Product::retryDirtyCacheInvalidation",
+]);
+$upgradeSql = file_get_contents($root . "/public/upgrade/3.5.8.1.sql");
+assertTrue(strpos($upgradeSql, '`id` DESC') === false, "the migration must not reference a nonexistent configuration.id column");
+assertTrue(strpos($upgradeSql, "JSON_EXTRACT") === false, "the migration must not parse large JSON dirty state while locking configuration");
+sourceContains($root . "/public/upgrade/3.5.8.2.sql", [
+	"CREATE TABLE IF NOT EXISTS `shd_product_catalog_cache_pending`",
+	"Runtime retry processing streams it through",
 ]);
 sourceContains($root . "/public/install/thinkcmf.sql", [
 	"('_product_catalog_cache_dirty', '0', UNIX_TIMESTAMP(), UNIX_TIMESTAMP())",
+	"CREATE TABLE `shd_product_catalog_cache_pending`",
 ]);
 sourceContains($root . "/public/upgrade/upgrade.php", [
 	"'_product_catalog_cache_dirty'",
-	"(int) \$dirtyRows !== 1",
+	"(int) \$dirtyRows < 1",
+	"product_catalog_cache_pending",
 ]);
 sourceContains($root . "/app/api/controller/UpgradeSystemController.php", [
 	'where("setting", "_product_catalog_cache_dirty")->count()',
-	"intval(\$dirtyRows) !== 1",
+	"intval(\$dirtyRows) < 1",
+	"product catalog dirty generation row is missing",
+]);
+sourceContains($root . "/app/api/controller/ProductController.php", [
+	"\$existingPids = empty(\$pids) ? [] : Db::name('products')->whereIn('id', \$pids)->column('id');",
+	'$logic->deleteDetailCache($missingPids);',
 ]);
 sourceContains($root . "/app/admin/controller/AdvancedOptionsController.php", [
 	'\\think\\Db::commit();',

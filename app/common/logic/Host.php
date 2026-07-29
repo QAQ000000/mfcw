@@ -26,6 +26,8 @@ class Host
 			"suspend" => "暂停",
 			"waiting" => "等待重启",
 			"process" => "任务处理中",
+			"cold_migrate" => "冷迁移中",
+			"hot_migrate" => "热迁移中",
 			"paused" => "挂起",
 			"not_support" => "不支持电源控制",
 			"error" => "未知",

@@ -93,8 +93,14 @@ if (version_compare($last_version, '3.5.8.1', '>=')) {
         die("数据库升级校验失败，版本号未更新<br/>");
     }
 	$dirtyRows = $dbObject->query("SELECT COUNT(*) FROM `{$prefix}configuration` WHERE `setting` = '_product_catalog_cache_dirty'")->fetchColumn();
-	if ((int) $dirtyRows !== 1) {
+	if ((int) $dirtyRows < 1) {
 		die("商品缓存升级校验失败，版本号未更新<br/>");
+	}
+}
+if (version_compare($last_version, '3.5.8.2', '>=')) {
+	$pendingTable = $dbObject->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = " . $dbObject->quote($prefix . 'product_catalog_cache_pending'))->fetchColumn();
+	if ((int) $pendingTable !== 1) {
+		die("商品缓存待清理表升级校验失败，版本号未更新<br/>");
 	}
 }
 if ($system_version_type[0]['value'] && $system_version_type[0]['value'] == 'beta'){ # 内测版

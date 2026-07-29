@@ -266,9 +266,16 @@ class UpgradeSystemController extends \think\Controller
 						return jsonrule(["status" => 400, "msg" => "数据库升级校验失败，版本号未更新"]);
 					}
 					$dirtyRows = \think\Db::name("configuration")->where("setting", "_product_catalog_cache_dirty")->count();
-					if (intval($dirtyRows) !== 1) {
-						error_log("Database upgrade postcondition failed: product catalog dirty generation row is not unique");
+					if (intval($dirtyRows) < 1) {
+						error_log("Database upgrade postcondition failed: product catalog dirty generation row is missing");
 						return jsonrule(["status" => 400, "msg" => "商品缓存升级校验失败，版本号未更新"]);
+					}
+				}
+				if (version_compare($last_version, "3.5.8.2", ">=")) {
+					$pendingTable = \think\Db::query("SELECT COUNT(*) AS `count` FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?", [$prefix . "product_catalog_cache_pending"]);
+					if (intval($pendingTable[0]["count"] ?? 0) !== 1) {
+						error_log("Database upgrade postcondition failed: product catalog pending table is missing");
+						return jsonrule(["status" => 400, "msg" => "商品缓存待清理表升级校验失败，版本号未更新"]);
 					}
 				}
 			if ($system_version_type["value"] && $system_version_type["value"] == "beta") {

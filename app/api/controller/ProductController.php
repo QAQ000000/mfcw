@@ -121,6 +121,10 @@ class ProductController
 
         $logic = new Product();
 
+        $pids = array_values(array_unique(array_filter(array_map('intval', (array) $pids), function ($pid) {
+            return $pid > 0;
+        })));
+
         $concurrent = $logic->concurrent;
 
         if (count($pids)>$concurrent){
@@ -128,6 +132,18 @@ class ProductController
             return json(['status'=>400,'msg'=>"商品数量过多,请分批请求,最大请求数量为{$concurrent}个"]);
 
         }
+
+        $existingPids = empty($pids) ? [] : Db::name('products')->whereIn('id', $pids)->column('id');
+        $existingPids = array_flip(array_map('intval', $existingPids));
+        $missingPids = array_values(array_filter($pids, function ($pid) use ($existingPids) {
+            return !isset($existingPids[$pid]);
+        }));
+        if (!empty($missingPids)) {
+            $logic->deleteDetailCache($missingPids);
+        }
+        $pids = array_values(array_filter($pids, function ($pid) use ($existingPids) {
+            return isset($existingPids[$pid]);
+        }));
 
         $detail = [];
 
@@ -143,7 +159,9 @@ class ProductController
 
             $tmp = $logic->getDetailCache($pid);
 
-            $detail[$pid] = $tmp[$pid];
+            if (isset($tmp[$pid])) {
+                $detail[$pid] = $tmp[$pid];
+            }
 
         }
 

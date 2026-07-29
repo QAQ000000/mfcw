@@ -119,6 +119,10 @@ $supplierStatus = $statusMethod->invoke($hostLogic, [
 	],
 ], "zjmf_api");
 assertSupplierCondition($supplierStatus === ["status" => "on", "des" => "开机"], "customer status responses must use the local status allowlist");
+$coldMigrateStatus = $statusMethod->invoke($hostLogic, ["data" => ["status" => "cold_migrate", "debug" => "secret"]], "resource");
+assertSupplierCondition($coldMigrateStatus === ["status" => "cold_migrate", "des" => "冷迁移中"], "DCIM Cloud cold migration status must remain visible to customers");
+$hotMigrateStatus = $statusMethod->invoke($hostLogic, ["data" => ["status" => "hot_migrate", "endpoint" => "https://supplier.invalid"]], "zjmf_api");
+assertSupplierCondition($hotMigrateStatus === ["status" => "hot_migrate", "des" => "热迁移中"], "DCIM Cloud hot migration status must remain visible to customers");
 $unknownSupplierStatus = $statusMethod->invoke($hostLogic, ["data" => ["status" => "vendor-private", "debug" => "secret"]], "resource");
 assertSupplierCondition($unknownSupplierStatus === ["status" => "unknown", "des" => "未知"], "unknown supplier status values must fail closed");
 $hostLogic->is_admin = true;
