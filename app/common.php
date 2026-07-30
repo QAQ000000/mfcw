@@ -914,16 +914,67 @@ function getNextTime($type, $number = 0, $start = 0, $ontrial = "day")
 }
 function configuration($config, $default = [])
 {
+	$cache = \app\common\logic\ConfigurationRequestCache::class;
+	$warmAll = function () use ($cache) {
+		$rows = \think\Db::name("configuration")->field("setting,value")->select()->toArray();
+		foreach ($rows as $row) {
+			$cache::put($row["setting"], $row["value"]);
+		}
+		$cache::markComplete();
+	};
 	if (is_array($config)) {
-		$result = \think\Db::name("configuration")->field("setting,value")->whereIn("setting", $config)->select()->toArray();
+		$missing = [];
+		foreach ($config as $setting) {
+			if (!$cache::has($setting)) {
+				$missing[(string) $setting] = $setting;
+			}
+		}
+		if (!empty($missing)) {
+			if ($cache::isComplete()) {
+				foreach ($missing as $setting) {
+					$cache::put($setting, null, false);
+				}
+			} elseif ($cache::shouldWarmAll(count($missing))) {
+				$warmAll();
+				foreach ($missing as $setting) {
+					if (!$cache::has($setting)) {
+						$cache::put($setting, null, false);
+					}
+				}
+			} else {
+				$result = \think\Db::name("configuration")->field("setting,value")->whereIn("setting", array_values($missing))->select()->toArray();
+				foreach ($missing as $setting) {
+					$cache::put($setting, null, false);
+				}
+				foreach ($result as $row) {
+					$cache::put($row["setting"], $row["value"]);
+				}
+			}
+		}
 		$re = [];
-		foreach ($result as $v) {
-			$re[$v["setting"]] = $v["value"];
+		foreach ($config as $setting) {
+			$item = $cache::get($setting);
+			if ($item["found"]) {
+				$re[$setting] = $item["value"];
+			}
 		}
 		return $re;
 	} else {
-		$result = \think\Db::name("configuration")->field("value")->whereRaw("setting = :setting", ["setting" => $config])->find();
-		$re = $result["value"] ?? null;
+		if (!$cache::has($config)) {
+			if ($cache::isComplete()) {
+				$cache::put($config, null, false);
+			} elseif ($cache::shouldWarmAll()) {
+				$warmAll();
+				if (!$cache::has($config)) {
+					$cache::put($config, null, false);
+				}
+			} else {
+				$result = \think\Db::name("configuration")->field("value")->whereRaw("setting = :setting", ["setting" => $config])->find();
+				$cache::put($config, $result["value"] ?? null, !empty($result));
+			}
+		}
+		$item = $cache::get($config);
+		$re = $item["found"] ? $item["value"] : null;
 		$data["controller"] = request()->controller();
 		$data["action"] = request()->action();
 		$change_arr = ["is_captcha", "allow_login_phone_captcha", "allow_login_email_captcha", "allow_login_id_captcha", "allow_login_code_captcha"];
@@ -948,6 +999,7 @@ function updateConfiguration($setting, $value)
 		$data["setting"] = $setting;
 		\think\Db::name("configuration")->insertGetId($data);
 	}
+	\app\common\logic\ConfigurationRequestCache::put($setting, $data["value"]);
 	return true;
 }
 function clearCartIndexResponseCache()
@@ -3076,6 +3128,7 @@ function create_system_token()
 	$res = \think\Db::name("configuration")->where("setting", $key)->find();
 	if (empty($res)) {
 		\think\Db::name("configuration")->insert(["setting" => $key, "value" => $token, "create_time" => time()]);
+		\app\common\logic\ConfigurationRequestCache::put($key, $token);
 	}
 }
 function get_dcim_svg($id, $os, $group)
@@ -7205,6 +7258,7 @@ function systemInstallHandle()
 		\think\Db::name("menus")->where("id", "<", $menu_last_id["id"])->delete();
 	}
 	\think\Db::name("configuration")->where("setting", "system_install_last")->delete();
+	\app\common\logic\ConfigurationRequestCache::put("system_install_last", null, false);
 }
 function upgradeSmsTemplate()
 {

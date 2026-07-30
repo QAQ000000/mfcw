@@ -17,6 +17,7 @@ class JobCommon
 	}
 	public function handle($data)
 	{
+		\app\common\logic\ConfigurationRequestCache::reset();
 		foreach (self::QUEUE_REQ as $k => $v) {
 			if (isset($data["queue_req"][$v])) {
 				request()->{self::QUEUE_REQ_FIXED . $v} = $data["queue_req"][$v];

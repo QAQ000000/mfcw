@@ -582,7 +582,7 @@ hr {width: 600px; background-color: #cccccc; border: 0px; height: 1px; color: #0
 		}
 		\think\Db::startTrans();
 		try {
-			\think\Db::name("configuration")->where("setting", "system_license")->update(["value" => $license]);
+			updateConfiguration("system_license", $license);
 			$res = \compareLicense();
 			if ($res === false) {
 				throw new \Exception("授权更换失败, 无法连接到授权服务器, 请检查网络");
