@@ -6,8 +6,56 @@ class Shop
 {
 	const MAX_LEN = 20;
 	const MIN_LEN = 6;
+	const MAX_PRODUCT_QUANTITY = 100;
 	public $uid;
 	private $cart_data;
+	public static function normalizeProductQuantity($qty)
+	{
+		if (is_int($qty)) {
+			return $qty >= 1 && $qty <= self::MAX_PRODUCT_QUANTITY ? $qty : false;
+		}
+		if (!is_string($qty) || !preg_match('/^[1-9][0-9]*$/D', $qty)) {
+			return false;
+		}
+		$max = (string) self::MAX_PRODUCT_QUANTITY;
+		if (strlen($qty) > strlen($max) || strlen($qty) === strlen($max) && strcmp($qty, $max) > 0) {
+			return false;
+		}
+		return intval($qty);
+	}
+	public static function normalizeCartProductQuantities($cart_data)
+	{
+		if (!is_array($cart_data) || !isset($cart_data["products"]) || !is_array($cart_data["products"])) {
+			return false;
+		}
+		foreach ($cart_data["products"] as &$product) {
+			if (!is_array($product)) {
+				return false;
+			}
+			$qty = self::normalizeProductQuantity($product["qty"] ?? null);
+			if ($qty === false) {
+				return false;
+			}
+			$product["qty"] = $qty;
+		}
+		unset($product);
+		return $cart_data;
+	}
+	private static function sanitizeStoredCartQuantities($cart_data)
+	{
+		if (!is_array($cart_data) || empty($cart_data["products"]) || !is_array($cart_data["products"])) {
+			return $cart_data;
+		}
+		foreach ($cart_data["products"] as &$product) {
+			if (!is_array($product)) {
+				continue;
+			}
+			$qty = self::normalizeProductQuantity($product["qty"] ?? null);
+			$product["qty"] = $qty === false ? 1 : $qty;
+		}
+		unset($product);
+		return $cart_data;
+	}
 	public function __construct($uid)
 	{
 		$this->uid = intval($uid);
@@ -55,11 +103,11 @@ class Shop
 				\think\Db::name("cart_session")->insert($idata);
 			}
 			cookie("shop_cookie", null);
-			$this->cart_data = $cart_data;
+			$this->cart_data = self::sanitizeStoredCartQuantities($cart_data);
 			$this->save();
 		} else {
 			if (!empty($shop_cookie_array)) {
-				$this->cart_data = $shop_cookie_array;
+				$this->cart_data = self::sanitizeStoredCartQuantities($shop_cookie_array);
 			} else {
 				$this->cart_data = [];
 			}
@@ -80,6 +128,10 @@ class Shop
 	private function checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $productqty, $os, $host, $password, $hostid)
 	{
 		$addCartArr = [];
+		$productqty = self::normalizeProductQuantity($productqty);
+		if ($productqty === false) {
+			return ["status" => "error", "msg" => "产品数量必须是1至" . self::MAX_PRODUCT_QUANTITY . "之间的整数"];
+		}
 		if (empty($pid)) {
 			return ["status" => "error", "msg" => "产品ID不存在"];
 		}
@@ -368,11 +420,11 @@ class Shop
 		if (!is_numeric($i)) {
 			return ["status" => "error", "msg" => "未传入产品所在购物车位置编号或传入参数有误"];
 		}
-		if (empty($qty) || !is_numeric($qty) || $qty <= 0) {
-			return ["status" => "error", "msg" => "未传入数量或传入数量有误"];
+		$qty = self::normalizeProductQuantity($qty);
+		if ($qty === false) {
+			return ["status" => "error", "msg" => "产品数量必须是1至" . self::MAX_PRODUCT_QUANTITY . "之间的整数"];
 		}
 		$i = intval($i);
-		$qty = intval($qty);
 		$cart_data = $this->cart_data;
 		$pid = $cart_data["products"][$i]["pid"];
 		if (empty($pid)) {

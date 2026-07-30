@@ -1381,7 +1381,10 @@ class CartController extends CommonController
 			$billingcycle = $param["billingcycle"];
 			$configoption = $param["configoption"];
 			$currencyid = isset($param["currencyid"]) ? $param["currencyid"] : "";
-			$qty = isset($param["qty"]) && intval($param["qty"]) > 0 ? intval($param["qty"]) : 1;
+			$qty = \app\common\logic\Shop::normalizeProductQuantity(array_key_exists("qty", $param) ? $param["qty"] : 1);
+			if ($qty === false) {
+				return jsons(["status" => 400, "msg" => "产品数量必须是1至" . \app\common\logic\Shop::MAX_PRODUCT_QUANTITY . "之间的整数"]);
+			}
 			$pid = $param["pid"];
 			$res = $product_filter = $all_option = [];
 			$setupfeetotal = $total = $signal_setupfee = $price_total = $signal_price = 0;
@@ -1843,12 +1846,12 @@ class CartController extends CommonController
 		if ($this->request->isPost()) {
 			$params = $this->request->param();
 			$i = intval($params["i"]);
-			$qty = intval($params["qty"]);
+			$qty = \app\common\logic\Shop::normalizeProductQuantity($params["qty"] ?? null);
 			if (!is_numeric($i)) {
 				return jsons(["status" => 400, "msg" => lang("CART_MODIFY_PROD_MUSH_NUMBER")]);
 			}
-			if (!is_numeric($qty) || $qty <= 0) {
-				return jsons(["status" => 400, "msg" => lang("CART_MODIFY_PROD_MUSH_NUMBER_ZERO")]);
+			if ($qty === false) {
+				return jsons(["status" => 400, "msg" => "产品数量必须是1至" . \app\common\logic\Shop::MAX_PRODUCT_QUANTITY . "之间的整数"]);
 			}
 			$pos = [];
 			if (isset($params["pos"]) && is_array($params["pos"]) && !empty($params["pos"])) {
@@ -1927,6 +1930,10 @@ class CartController extends CommonController
 			$result["status"] = 406;
 			$result["msg"] = lang("CART_SETTLE_CART_ERROR");
 			return jsons($result);
+		}
+		$cart_data = \app\common\logic\Shop::normalizeCartProductQuantities($cart_data);
+		if ($cart_data === false) {
+			return jsons(["status" => 400, "msg" => "购物车中的产品数量无效，请返回购物车重新选择"]);
 		}
 		$prod = [];
 		foreach ($cart_data["products"] as $k => $value) {
@@ -2842,7 +2849,10 @@ class CartController extends CommonController
 				$product_model = new \app\common\model\ProductModel();
 				$billingcycle = $product_model->getProductCycle($pid, $currencyid, "", "", "", "", "", "", 1)[0]["billingcycle"] ?? "";
 			}
-			$qty = isset($param["qty"]) && intval($param["qty"]) > 0 ? intval($param["qty"]) : 1;
+			$qty = \app\common\logic\Shop::normalizeProductQuantity(array_key_exists("qty", $param) ? $param["qty"] : 1);
+			if ($qty === false) {
+				return jsons(["status" => 400, "msg" => "产品数量必须是1至" . \app\common\logic\Shop::MAX_PRODUCT_QUANTITY . "之间的整数"]);
+			}
 			$os = isset($param["os"]) ? $param["os"] : [];
 			$shop = new \app\common\logic\Shop($uid);
 			$product = \think\Db::name("products")->field("host,password,name,is_truename,stock_control,qty,zjmf_api_id,upstream_pid,api_type")->where("id", $pid)->find();
@@ -3053,7 +3063,10 @@ class CartController extends CommonController
 			$configoption = $param["configoption"];
 			$customfield = $param["customfield"];
 			$currencyid = $param["currencyid"];
-			$qty = isset($param["qty"]) && intval($param["qty"]) ? intval($param["qty"]) : 1;
+			$qty = \app\common\logic\Shop::normalizeProductQuantity(array_key_exists("qty", $param) ? $param["qty"] : 1);
+			if ($qty === false) {
+				return jsons(["status" => 400, "msg" => "产品数量必须是1至" . \app\common\logic\Shop::MAX_PRODUCT_QUANTITY . "之间的整数"]);
+			}
 			$os = isset($param["os"]) ? $param["os"] : [];
 			$uid = $request->uid;
 			$shop = new \app\common\logic\Shop($uid);

@@ -601,7 +601,7 @@
 								{if $cart.allow_qty==1}
 								<div class="cart_qty">
 									<input type="hidden" name="i" value="{$cart_val}">
-									<input type="number" name="qty" class="number" value="{$cart.qty}" style="width: 70px;">
+									<input type="number" name="qty" class="number" value="{$cart.qty}" min="1" max="100" step="1" style="width: 70px;">
 									<button type="button" class="btn btn-sm" style="background: #efefef;" onclick="cartQtyBtn(this)">{$Lang.to_update}</button>
 								</div>
 								{/if}

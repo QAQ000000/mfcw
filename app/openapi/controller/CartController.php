@@ -237,7 +237,10 @@ class CartController extends \cmf\controller\HomeBaseController
 		$param = $this->request->only(["product_id", "billingcycle", "configoption", "qty"]);
 		$billingcycle = $param["billingcycle"];
 		$configoption = $param["configoption"];
-		$qty = isset($param["qty"]) ? intval($param["qty"]) : 1;
+		$qty = \app\common\logic\Shop::normalizeProductQuantity(array_key_exists("qty", $param) ? $param["qty"] : 1);
+		if ($qty === false) {
+			return json(["status" => 400, "msg" => "Quantity must be an integer between 1 and " . \app\common\logic\Shop::MAX_PRODUCT_QUANTITY]);
+		}
 		$pid = intval($param["product_id"]);
 		$product_filter = [];
 		$total = 0;
@@ -375,9 +378,9 @@ class CartController extends \cmf\controller\HomeBaseController
 			$product_model = new \app\common\model\ProductModel();
 			$billingcycle = $product_model->getProductCycle($pid, $currencyid, "", "", "", "", "", "", 1)[0]["billingcycle"] ?? "";
 		}
-		$qty = $param["qty"] ?: 1;
-		if (empty($qty)) {
-			return json(["status" => 400, "msg" => "Quantity is greater than 0"]);
+		$qty = \app\common\logic\Shop::normalizeProductQuantity(array_key_exists("qty", $param) ? $param["qty"] : 1);
+		if ($qty === false) {
+			return json(["status" => 400, "msg" => "Quantity must be an integer between 1 and " . \app\common\logic\Shop::MAX_PRODUCT_QUANTITY]);
 		}
 		$os = isset($param["os"]) ? $param["os"] : [];
 		$shop = new \app\common\logic\Shop($uid);
@@ -604,6 +607,10 @@ class CartController extends \cmf\controller\HomeBaseController
 			$result["status"] = 400;
 			$result["msg"] = "Cart cannot be empty";
 			return json($result);
+		}
+		$cart_data = \app\common\logic\Shop::normalizeCartProductQuantities($cart_data);
+		if ($cart_data === false) {
+			return json(["status" => 400, "msg" => "The product quantity in the cart is invalid; return to the cart and select it again"]);
 		}
 		$prod = [];
 		foreach ($cart_data["products"] as $k => $value) {
@@ -1567,7 +1574,10 @@ class CartController extends \cmf\controller\HomeBaseController
 		$billingcycle = $param["billingcycle"];
 		$configoption = $param["configoption"];
 		$currencyid = isset($param["currencyid"]) ? $param["currencyid"] : "";
-		$qty = isset($param["qty"]) && intval($param["qty"]) > 0 ? intval($param["qty"]) : 1;
+		$qty = \app\common\logic\Shop::normalizeProductQuantity(array_key_exists("qty", $param) ? $param["qty"] : 1);
+		if ($qty === false) {
+			return json(["status" => 400, "msg" => "Quantity must be an integer between 1 and " . \app\common\logic\Shop::MAX_PRODUCT_QUANTITY]);
+		}
 		$pid = $param["pid"];
 		$res = $product_filter = $all_option = [];
 		$setupfeetotal = $total = $signal_setupfee = $price_total = $signal_price = 0;
@@ -1951,7 +1961,10 @@ class CartController extends \cmf\controller\HomeBaseController
 			$product_model = new \app\common\model\ProductModel();
 			$billingcycle = $product_model->getProductCycle($pid, $currencyid, "", "", "", "", "", "", 1)[0]["billingcycle"] ?? "";
 		}
-		$qty = intval($param["qty"]);
+		$qty = \app\common\logic\Shop::normalizeProductQuantity(array_key_exists("qty", $param) ? $param["qty"] : 1);
+		if ($qty === false) {
+			return json(["status" => 400, "msg" => "Quantity must be an integer between 1 and " . \app\common\logic\Shop::MAX_PRODUCT_QUANTITY]);
+		}
 		$os = isset($param["os"]) ? $param["os"] : [];
 		$shop = new \app\common\logic\Shop($uid);
 		$product = \think\Db::name("products")->field("host,password,name,is_truename,stock_control,qty,zjmf_api_id,upstream_pid,api_type")->where("id", $pid)->find();
@@ -2060,7 +2073,10 @@ class CartController extends \cmf\controller\HomeBaseController
 		$configoption = $param["configoption"];
 		$customfield = $param["customfield"];
 		$currencyid = $param["currencyid"];
-		$qty = isset($param["qty"]) && intval($param["qty"]) ? intval($param["qty"]) : 1;
+		$qty = \app\common\logic\Shop::normalizeProductQuantity(array_key_exists("qty", $param) ? $param["qty"] : 1);
+		if ($qty === false) {
+			return json(["status" => 400, "msg" => "Quantity must be an integer between 1 and " . \app\common\logic\Shop::MAX_PRODUCT_QUANTITY]);
+		}
 		$os = isset($param["os"]) ? $param["os"] : [];
 		$uid = $this->request->uid;
 		$shop = new \app\common\logic\Shop($uid);
@@ -2100,7 +2116,10 @@ class CartController extends \cmf\controller\HomeBaseController
 	{
 		$param = $this->request->param();
 		$i = intval($param["position"]);
-		$qty = intval($param["qty"]);
+		$qty = \app\common\logic\Shop::normalizeProductQuantity($param["qty"] ?? null);
+		if ($qty === false) {
+			return json(["status" => 400, "msg" => "Quantity must be an integer between 1 and " . \app\common\logic\Shop::MAX_PRODUCT_QUANTITY]);
+		}
 		$pos = [];
 		if (isset($param["pos"]) && is_array($param["pos"]) && !empty($param["pos"])) {
 			$pos = $param["pos"];
