@@ -42,7 +42,8 @@ CREATE TABLE `shd_activity_log` (
   `activeid` int(11) DEFAULT NULL COMMENT '操作人',
   `usertype` varchar(255) DEFAULT NULL COMMENT '操作类型',
   PRIMARY KEY (`id`) USING BTREE,
-  KEY `userid` (`uid`) USING BTREE
+  KEY `userid` (`uid`) USING BTREE,
+  KEY `idx_activity_log_client_page` (`uid`,`client_visible`,`id`) USING BTREE
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 ROW_FORMAT=COMPACT COMMENT='系统活动日志';
 
 /*Data for the table `shd_activity_log` */
@@ -464,7 +465,8 @@ CREATE TABLE `shd_clients` (
   PRIMARY KEY (`id`) USING BTREE,
   UNIQUE KEY `wechat_id` (`wechat_id`) USING BTREE,
   KEY `sale_id` (`sale_id`),
-  KEY `phonenumber` (`phonenumber`)
+  KEY `phonenumber` (`phonenumber`),
+  KEY `idx_clients_email` (`email`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 ROW_FORMAT=COMPACT;
 
 /*Data for the table `shd_clients` */
@@ -998,7 +1000,8 @@ CREATE TABLE `shd_invoice_items` (
   `delete_time` int(10) NOT NULL,
   PRIMARY KEY (`id`) USING BTREE,
   KEY `invoiceid` (`invoice_id`) USING BTREE,
-  KEY `userid` (`uid`,`type`,`rel_id`) USING BTREE
+  KEY `userid` (`uid`,`type`,`rel_id`) USING BTREE,
+  KEY `idx_invoice_items_rel_type_invoice` (`rel_id`,`type`,`invoice_id`) USING BTREE
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 ROW_FORMAT=COMPACT;
 
 /*Data for the table `shd_invoice_items` */
@@ -1061,7 +1064,9 @@ CREATE TABLE `shd_jobs` (
   `reserved_at` int(10) unsigned DEFAULT NULL,
   `available_at` int(10) unsigned NOT NULL,
   `created_at` int(10) unsigned NOT NULL,
-  PRIMARY KEY (`id`)
+  PRIMARY KEY (`id`),
+  KEY `idx_jobs_expired` (`queue`(191),`reserved`,`reserved_at`),
+  KEY `idx_jobs_available` (`queue`(191),`reserved`,`id`,`available_at`)
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8;
 
 /*Data for the table `shd_jobs` */
@@ -1291,7 +1296,8 @@ CREATE TABLE `shd_orders` (
   `invoiceid` int(10) NOT NULL DEFAULT '0' COMMENT '账单id',
   `delete_time` int(11) NOT NULL,
   `notes` varchar(255) DEFAULT NULL,
-  PRIMARY KEY (`id`) USING BTREE
+  PRIMARY KEY (`id`) USING BTREE,
+  KEY `idx_orders_invoiceid` (`invoiceid`) USING BTREE
 ) ENGINE=InnoDB AUTO_INCREMENT=1 DEFAULT CHARSET=utf8mb4 ROW_FORMAT=COMPACT;
 
 /*Data for the table `shd_orders` */

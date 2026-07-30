@@ -40,6 +40,7 @@ class RecordLogController extends CommonController
 		$limit = isset($param["limit"]) ? intval($param["limit"]) : (configuration("NumRecordstoDisplay") ?: config("limit"));
 		$orderby = strval($param["orderby"]) ? strval($param["orderby"]) : "id";
 		$sorting = $param["sorting"] ?? "DESC";
+		$order = ClientActivityLog::buildPaginationOrder($orderby, $sorting, "create_time");
 		$fun = function (\think\db\Query $query) use($uid, $param) {
 			$query->where("uid", $uid);
 			$query->where("type", "neq", 1);
@@ -126,7 +127,7 @@ class RecordLogController extends CommonController
 			} else {
 				return $value .= ":" . $data["port"];
 			}
-		})->order("{$orderby} {$sorting}")->order("create_time", "DESC")->page($page)->limit($limit)->select()->toArray();
+		})->order($order)->page($page)->limit($limit)->select()->toArray();
 		$count = \think\Db::name("activity_log")->where($fun)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
@@ -167,6 +168,7 @@ class RecordLogController extends CommonController
 		$limit = $param["limit"] >= 1 ? intval($param["limit"]) : 20;
 		$orderby = strval($param["orderby"]) ? strval($param["orderby"]) : "id";
 		$sorting = $param["sorting"] ?? "DESC";
+		$order = ClientActivityLog::buildPaginationOrder($orderby, $sorting, "id");
 		$fun = function (\think\db\Query $query) use($uid, $param) {
 			$query->where("uid", $uid);
 			$query->where("activeid", $uid);
@@ -232,7 +234,7 @@ class RecordLogController extends CommonController
 			} else {
 				return $value .= ":" . $data["port"];
 			}
-		})->order("{$orderby} {$sorting}")->order("id", "DESC")->page($page)->limit($limit)->select()->toArray();
+		})->order($order)->page($page)->limit($limit)->select()->toArray();
 		$count = \think\Db::name("activity_log")->where($fun)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];

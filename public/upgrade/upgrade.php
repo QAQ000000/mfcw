@@ -103,6 +103,45 @@ if (version_compare($last_version, '3.5.8.2', '>=')) {
 		die("商品缓存待清理表升级校验失败，版本号未更新<br/>");
 	}
 }
+if (version_compare($last_version, '3.5.8.3', '>=')) {
+	$expectedIndexes = [
+		['activity_log', 'idx_activity_log_client_page', [['uid', null], ['client_visible', null], ['id', null]]],
+		['clients', 'idx_clients_email', [['email', null]]],
+		['invoice_items', 'idx_invoice_items_rel_type_invoice', [['rel_id', null], ['type', null], ['invoice_id', null]]],
+		['orders', 'idx_orders_invoiceid', [['invoiceid', null]]],
+		['jobs', 'idx_jobs_expired', [['queue', 191], ['reserved', null], ['reserved_at', null]]],
+		['jobs', 'idx_jobs_available', [['queue', 191], ['reserved', null], ['id', null], ['available_at', null]]],
+	];
+	try {
+		$tableStatement = $dbObject->prepare('SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?');
+		$indexStatement = $dbObject->prepare('SELECT COLUMN_NAME AS column_name, SEQ_IN_INDEX AS seq_in_index, SUB_PART AS sub_part, NON_UNIQUE AS non_unique FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ? ORDER BY SEQ_IN_INDEX');
+		foreach ($expectedIndexes as $expectedIndex) {
+			$tableName = $prefix . $expectedIndex[0];
+			$tableStatement->execute([$tableName]);
+			if ((int) $tableStatement->fetchColumn() !== 1) {
+				throw new RuntimeException("table {$tableName} is missing");
+			}
+			$indexStatement->execute([$tableName, $expectedIndex[1]]);
+			$indexRows = $indexStatement->fetchAll(PDO::FETCH_ASSOC);
+			if (count($indexRows) !== count($expectedIndex[2])) {
+				throw new RuntimeException("index {$tableName}.{$expectedIndex[1]} has an unexpected column count");
+			}
+			foreach ($expectedIndex[2] as $position => $expectedColumn) {
+				$actualColumn = $indexRows[$position];
+				$actualPrefix = isset($actualColumn['sub_part']) ? (int) $actualColumn['sub_part'] : null;
+				if ((string) $actualColumn['column_name'] !== $expectedColumn[0]
+					|| (int) $actualColumn['seq_in_index'] !== $position + 1
+					|| $actualPrefix !== $expectedColumn[1]
+					|| (int) $actualColumn['non_unique'] !== 1) {
+					throw new RuntimeException("index {$tableName}.{$expectedIndex[1]} has an unexpected definition");
+				}
+			}
+		}
+	} catch (Throwable $e) {
+		error_log('Database upgrade postcondition failed: ' . $e->getMessage());
+		die("数据库索引升级校验失败，版本号未更新<br/>");
+	}
+}
 if ($system_version_type[0]['value'] && $system_version_type[0]['value'] == 'beta'){ # 内测版
     $update_sql_beta = "update " . $prefix . "configuration set value='{$last_version}' where setting = 'beta_version'";
     $dbObject->query($update_sql_beta);

@@ -278,6 +278,45 @@ class UpgradeSystemController extends \think\Controller
 						return jsonrule(["status" => 400, "msg" => "商品缓存待清理表升级校验失败，版本号未更新"]);
 					}
 				}
+				if (version_compare($last_version, "3.5.8.3", ">=")) {
+					$expectedIndexes = [
+						["activity_log", "idx_activity_log_client_page", [["uid", null], ["client_visible", null], ["id", null]]],
+						["clients", "idx_clients_email", [["email", null]]],
+						["invoice_items", "idx_invoice_items_rel_type_invoice", [["rel_id", null], ["type", null], ["invoice_id", null]]],
+						["orders", "idx_orders_invoiceid", [["invoiceid", null]]],
+						["jobs", "idx_jobs_expired", [["queue", 191], ["reserved", null], ["reserved_at", null]]],
+						["jobs", "idx_jobs_available", [["queue", 191], ["reserved", null], ["id", null], ["available_at", null]]],
+					];
+					try {
+						foreach ($expectedIndexes as $expectedIndex) {
+							$tableName = $prefix . $expectedIndex[0];
+							$tableRows = \think\Db::query("SELECT COUNT(*) AS `count` FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?", [$tableName]);
+							if (intval($tableRows[0]["count"] ?? 0) !== 1) {
+								throw new \RuntimeException("table {$tableName} is missing");
+							}
+							$indexRows = \think\Db::query(
+								"SELECT COLUMN_NAME AS `column_name`, SEQ_IN_INDEX AS `seq_in_index`, SUB_PART AS `sub_part`, NON_UNIQUE AS `non_unique` FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ? ORDER BY SEQ_IN_INDEX",
+								[$tableName, $expectedIndex[1]]
+							);
+							if (count($indexRows) !== count($expectedIndex[2])) {
+								throw new \RuntimeException("index {$tableName}.{$expectedIndex[1]} has an unexpected column count");
+							}
+							foreach ($expectedIndex[2] as $position => $expectedColumn) {
+								$actualColumn = $indexRows[$position];
+								$actualPrefix = isset($actualColumn["sub_part"]) ? intval($actualColumn["sub_part"]) : null;
+								if ((string) ($actualColumn["column_name"] ?? "") !== $expectedColumn[0]
+									|| intval($actualColumn["seq_in_index"] ?? 0) !== $position + 1
+									|| $actualPrefix !== $expectedColumn[1]
+									|| intval($actualColumn["non_unique"] ?? 0) !== 1) {
+									throw new \RuntimeException("index {$tableName}.{$expectedIndex[1]} has an unexpected definition");
+								}
+							}
+						}
+					} catch (\Throwable $e) {
+						error_log("Database upgrade postcondition failed: " . $e->getMessage());
+						return jsonrule(["status" => 400, "msg" => "数据库索引升级校验失败，版本号未更新"]);
+					}
+				}
 			if ($system_version_type["value"] && $system_version_type["value"] == "beta") {
 			\think\Db::name("configuration")->where("setting", "beta_version")->update(["value" => $last_version]);
 		}

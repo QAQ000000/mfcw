@@ -43,6 +43,18 @@ class ClientActivityLog
         return $query;
     }
 
+    public static function buildPaginationOrder($orderby, $sorting, $secondaryField)
+    {
+        $orderby = trim((string) $orderby);
+        $sorting = trim((string) $sorting);
+        $order = $orderby . ' ' . $sorting;
+        $primaryField = trim(preg_replace('/^.*\./', '', $orderby), " `");
+        if (strcasecmp($primaryField, 'id') !== 0) {
+            $order .= ',' . $secondaryField . ' DESC';
+        }
+        return $order;
+    }
+
     public static function isVisible($description, $clientVisible = 1)
     {
         if ((int) $clientVisible !== 1) {

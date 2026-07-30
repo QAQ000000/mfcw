@@ -21,6 +21,7 @@ class LogController extends \cmf\controller\HomeBaseController
 		$limit = isset($param["limit"]) ? intval($param["limit"]) : (configuration("NumRecordstoDisplay") ?: config("limit"));
 		$orderby = strval($param["orderby"]) ? strval($param["orderby"]) : "id";
 		$sorting = $param["sorting"] ?? "DESC";
+		$order = ClientActivityLog::buildPaginationOrder($orderby, $sorting, "create_time");
 		$fun = function (\think\db\Query $query) use($uid, $param) {
 			$query->where("uid", $uid);
 			$query->where("type", "neq", 1);
@@ -101,7 +102,7 @@ class LogController extends \cmf\controller\HomeBaseController
 			} else {
 				return $value;
 			}
-		})->order("{$orderby} {$sorting}")->order("create_time", "DESC")->page($page)->limit($limit)->select()->toArray();
+		})->order($order)->page($page)->limit($limit)->select()->toArray();
 		$count = \think\Db::name("activity_log")->where($fun)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];

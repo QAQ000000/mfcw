@@ -229,6 +229,7 @@ class HostController extends \cmf\controller\HomeBaseController
 		$limit = $param["limit"] >= 1 ? intval($param["limit"]) : 20;
 		$orderby = strval($param["orderby"]) ? strval($param["orderby"]) : "id";
 		$sorting = $param["sorting"] ?? "DESC";
+		$order = ClientActivityLog::buildPaginationOrder($orderby, $sorting, "id");
 		$fun = function (\think\db\Query $query) use($uid, $id) {
 			$query->where("uid", $uid);
 			$query->where("activeid", $uid);
@@ -247,7 +248,7 @@ class HostController extends \cmf\controller\HomeBaseController
 				$query->whereOr("description", "like", "%{$search_desc}%");
 				$query->whereOr("ipaddr", "like", "%{$search_desc}%");
 			}
-		})->order("{$orderby} {$sorting}")->order("id", "DESC")->page($page)->limit($limit)->select()->toArray();
+		})->order($order)->page($page)->limit($limit)->select()->toArray();
 		$count = \think\Db::name("activity_log")->where($fun)->where($visibility)->where(function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
 				$search_desc = $param["keywords"];
