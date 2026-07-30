@@ -356,7 +356,39 @@ class CartController extends CommonController
 	{
 		$param = $this->request->param();
 		$pid = intval($param["pid"]);
-		$product = \think\Db::name("products")->field("qty,stock_control,hidden")->where("id", $pid)->find();
+		$product = \think\Db::name("products")
+			->alias("p")
+			->leftJoin("product_groups g", "g.id=p.gid")
+			->leftJoin("product_first_groups fg", "fg.id=g.gid")
+			->field("p.id,p.api_type,p.zjmf_api_id,p.upstream_pid,p.qty,p.stock_control,p.upstream_qty,p.upstream_stock_control,p.hidden,g.hidden as supplier_group_hidden,fg.hidden as supplier_first_group_hidden")
+			->where("p.id", $pid)
+			->find();
+		if (!empty($product)) {
+			$product = \app\common\logic\Product::normalizeSupplierProductState($product);
+			if ($product["api_type"] === "zjmf_api" && !$product["hidden"]) {
+				try {
+					$upstream = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 3, "GET");
+					if (($upstream["status"] ?? 400) === 200 && !empty($upstream["data"]["product"])) {
+						$product["upstream_stock_control"] = intval($upstream["data"]["product"]["stock_control"] ?? 0);
+						$product["upstream_qty"] = intval($upstream["data"]["product"]["qty"] ?? 0);
+						$product = \app\common\logic\Product::normalizeSupplierProductState($product);
+					} elseif (($upstream["status"] ?? 400) === 200) {
+						$product["hidden"] = 1;
+					} else {
+						throw new \RuntimeException((string) ($upstream["msg"] ?? "upstream stock validation failed"));
+					}
+				} catch (\Throwable $e) {
+					try {
+						active_log_final(\app\common\logic\ClientActivityLog::markInternal("结算库存校验失败,本地#PRODUCT ID:{$pid},报错信息:" . $e->getMessage(), "supplier"), 0, 5);
+					} catch (\Throwable $logException) {
+						error_log("Failed to record supplier stock validation error: " . $logException->getMessage());
+					}
+					$product["stock_control"] = 1;
+					$product["qty"] = 0;
+				}
+			}
+			$product = ["qty" => $product["qty"], "stock_control" => $product["stock_control"], "hidden" => $product["hidden"]];
+		}
 		$data = ["product" => $product];
 		return jsons(["status" => 200, "msg" => lang("SUCCESS MESSAGE"), "data" => $data]);
 	}
@@ -524,10 +556,14 @@ class CartController extends CommonController
 		$desc = "客户User ID:{$uid}在" . date("Y-m-d H:i:s") . "调取cart/all接口获取产品数据";
 		apiResourceLog($uid, $desc);
 		$developer_app_product_type = config("developer_app_product_type");
-		$count = \think\Db::name("products")->where("hidden", 0)->where("retired", 0)->whereNotIn("type", array_keys($developer_app_product_type))->count();
-		$groups = \think\Db::name("product_groups")->field("id,name")->where("hidden", 0)->select()->toArray();
+		$count = \think\Db::name("products")->alias("p")->leftJoin("product_groups g", "g.id=p.gid")->leftJoin("product_first_groups fg", "fg.id=g.gid")->where("p.hidden", 0)->where("p.retired", 0)->where("g.hidden", 0)->where("fg.hidden", 0)->whereNotIn("p.type", array_keys($developer_app_product_type))->count();
+		$groups = \think\Db::name("product_groups")->alias("g")->leftJoin("product_first_groups fg", "fg.id=g.gid")->field("g.id,g.name")->where("g.hidden", 0)->where("fg.hidden", 0)->select()->toArray();
 		foreach ($groups as &$group) {
-			$products = \think\Db::name("products")->field("id,type,name,description")->where("gid", $group["id"])->where("hidden", 0)->where("retired", 0)->whereNotIn("type", array_keys($developer_app_product_type))->select()->toArray();
+			$products = \think\Db::name("products")->field("id,type,name,description,api_type,stock_control,qty,upstream_stock_control,upstream_qty")->where("gid", $group["id"])->where("hidden", 0)->where("retired", 0)->whereNotIn("type", array_keys($developer_app_product_type))->select()->toArray();
+			foreach ($products as &$product) {
+				$product = \app\common\logic\Product::normalizeSupplierProductState($product);
+			}
+			unset($product);
 			$group["products"] = $products;
 		}
 		$code = \think\Db::name("currencies")->where("default", 1)->value("code");
@@ -551,11 +587,17 @@ class CartController extends CommonController
 		$uid = request()->uid;
 		$flag = getSaleProductUser($pid, $uid);
 		$data["flag"] = $flag;
-		$product = \think\Db::name("products")->where("id", $pid)->where(function (\think\db\Query $query) {
-		})->find();
+		$product = \think\Db::name("products")
+			->alias("p")
+			->leftJoin("product_groups g", "g.id=p.gid")
+			->leftJoin("product_first_groups fg", "fg.id=g.gid")
+			->field("p.*,g.hidden as supplier_group_hidden,fg.hidden as supplier_first_group_hidden")
+			->where("p.id", $pid)
+			->find();
 		if (empty($product)) {
 			return jsons(["status" => 400, "msg" => lang("CART_PRO_CONF_NOTFOUND")]);
 		}
+		$product = \app\common\logic\Product::normalizeSupplierProductState($product);
 		$desc = "客户User ID:{$uid}在" . date("Y-m-d H:i:s") . "调取cart/get_product_config接口";
 		apiResourceLog($uid, $desc, $pid, $product["location_version"]);
 		unset($product["upstream_product_shopping_url"]);
@@ -645,8 +687,9 @@ class CartController extends CommonController
 			}
 		};
 		$count = \think\Db::name("products")->alias("a")->leftJoin("product_groups b", "a.gid = b.id")->leftJoin("product_first_groups c", "b.gid = c.id")->where($where)->count();
-		$products = \think\Db::name("products")->alias("a")->field("a.id,a.type,a.gid,a.name,a.description,a.pay_method,a.tax,a.order,a.pay_type,a.api_type,a.upstream_version,a.upstream_price_type,a.upstream_price_value,a.stock_control,a.qty")->leftJoin("product_groups b", "a.gid = b.id")->leftJoin("product_first_groups c", "b.gid = c.id")->where($where)->order("a.order", "asc")->select()->toArray();
+		$products = \think\Db::name("products")->alias("a")->field("a.id,a.type,a.gid,a.name,a.description,a.pay_method,a.tax,a.order,a.pay_type,a.api_type,a.upstream_version,a.upstream_price_type,a.upstream_price_value,a.stock_control,a.qty,a.upstream_stock_control,a.upstream_qty")->leftJoin("product_groups b", "a.gid = b.id")->leftJoin("product_first_groups c", "b.gid = c.id")->where($where)->order("a.order", "asc")->select()->toArray();
 		foreach ($products as $kkk => $product) {
+			$product = \app\common\logic\Product::normalizeSupplierProductState($product);
 			$filterproducts[$kkk] = array_map(function ($v) {
 				return is_string($v) ? htmlspecialchars_decode($v, ENT_QUOTES) : $v;
 			}, $product);
@@ -932,7 +975,7 @@ class CartController extends CommonController
 			$sort = !empty($params["sort"]) ? trim($params["sort"]) : "DESC";
 			$gid = \think\Db::name("product_groups")->where("order_frm_tpl", "uuid")->value("id");
 			$url = request()->domain() . config("app_file_url");
-			$products = \think\Db::name("products")->field("id,info,type,gid,name,description,pay_method,tax,order,pay_type,api_type,upstream_version,upstream_price_type,upstream_price_value,stock_control,qty,icon")->where("gid", $gid)->where("hidden", 0)->where("retired", 0)->where("p_uid", ">", 0)->where(function (\think\db\Query $query) use($p_uid) {
+			$products = \think\Db::name("products")->field("id,info,type,gid,name,description,pay_method,tax,order,pay_type,api_type,upstream_version,upstream_price_type,upstream_price_value,stock_control,qty,upstream_stock_control,upstream_qty,icon")->where("gid", $gid)->where("hidden", 0)->where("retired", 0)->where("p_uid", ">", 0)->where(function (\think\db\Query $query) use($p_uid) {
 				if (!empty($p_uid)) {
 					$query->where("p_uid", $p_uid);
 				}
@@ -946,16 +989,17 @@ class CartController extends CommonController
 		} else {
 			if (isset($params["gid"]) && !empty($params["gid"])) {
 				$gid = intval($params["gid"]);
-				$products = \think\Db::name("products")->field("id,type,gid,name,description,pay_method,tax,order,pay_type,api_type,upstream_version,upstream_price_type,upstream_price_value,stock_control,qty")->where("gid", $gid)->where("hidden", 0)->where("retired", 0)->order("order", "asc")->select()->toArray();
+				$products = \think\Db::name("products")->field("id,type,gid,name,description,pay_method,tax,order,pay_type,api_type,upstream_version,upstream_price_type,upstream_price_value,stock_control,qty,upstream_stock_control,upstream_qty")->where("gid", $gid)->where("hidden", 0)->where("retired", 0)->order("order", "asc")->select()->toArray();
 			} else {
 				$defaultgroup = \think\Db::name("product_groups")->where("gid", $first_gid)->where("hidden", 0)->where("order_frm_tpl", "<>", "uuid")->order("order", "asc")->order("id", "asc")->find();
 				if (!empty($defaultgroup)) {
 					$groupid = $defaultgroup["id"];
-					$products = \think\Db::name("products")->field("id,type,gid,name,description,pay_method,tax,order,pay_type,api_type,upstream_version,upstream_price_type,upstream_price_value,stock_control,qty")->where("gid", $groupid)->where("hidden", 0)->where("retired", 0)->order("order", "asc")->select()->toArray();
+					$products = \think\Db::name("products")->field("id,type,gid,name,description,pay_method,tax,order,pay_type,api_type,upstream_version,upstream_price_type,upstream_price_value,stock_control,qty,upstream_stock_control,upstream_qty")->where("gid", $groupid)->where("hidden", 0)->where("retired", 0)->order("order", "asc")->select()->toArray();
 				}
 			}
 		}
 			foreach ($products as $kkk => $product) {
+				$product = \app\common\logic\Product::normalizeSupplierProductState($product);
 				$filterproducts[$kkk] = array_map(function ($v) {
 					return is_string($v) ? htmlspecialchars_decode($v, ENT_QUOTES) : $v;
 				}, $product);
@@ -1394,10 +1438,11 @@ class CartController extends CommonController
 				return jsons(["status" => 400, "msg" => lang("CART_GETTOTAL_PRICE_ERROR")]);
 			}
 			$setupfeecycle = $cart->changeCycleToupfee($billingcycle);
-			$product = \think\Db::name("products")->alias("a")->field("a.id as productid,a.name,a.pay_type,b.*,a.api_type,a.upstream_version,a.upstream_price_type,a.upstream_price_value,a.hidden,a.stock_control,a.qty")->leftJoin("pricing b", "a.id = b.relid")->where("a.id", $pid)->where("b.type", "product")->where("b.currency", $currencyid)->find();
+			$product = \think\Db::name("products")->alias("a")->field("a.id as productid,a.name,a.pay_type,b.*,a.api_type,a.upstream_version,a.upstream_price_type,a.upstream_price_value,a.hidden,a.stock_control,a.qty,a.upstream_stock_control,a.upstream_qty")->leftJoin("pricing b", "a.id = b.relid")->where("a.id", $pid)->where("b.type", "product")->where("b.currency", $currencyid)->find();
 			if (!$product) {
 				return jsons(["status" => 400, "msg" => lang("CART_GETTOTAL_PRODUCT_ERROR")]);
 			}
+			$product = \app\common\logic\Product::normalizeSupplierProductState($product);
 			if ($product["api_type"] == "zjmf_api" && $product["upstream_price_type"] == "percent") {
 				$is_ajmf_api = true;
 			} else {
@@ -2919,7 +2964,7 @@ class CartController extends CommonController
 				}
 			}
 			if ($product["api_type"] == "zjmf_api" || $product["api_type"] == "resource") {
-				$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 30, "GET");
+				$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 3, "GET");
 				if ($result["status"] == 200) {
 					$upstream_data = $result["data"];
 					if (empty($upstream_data["product"])) {
@@ -2930,9 +2975,11 @@ class CartController extends CommonController
 							(new \app\common\logic\Product())->invalidateCacheOrMarkDirty([$pid], "upstream product hidden in home cart");
 							return jsons(["status" => 400, "msg" => "商品不存在"]);
 					}
-					if ($upstream_data["product"]["stock_control"] && $upstream_data["product"]["qty"] <= 0) {
+					if ($upstream_data["product"]["stock_control"] && $upstream_data["product"]["qty"] < $qty) {
 						return jsons(["status" => 400, "msg" => lang("CART_SETTLE_PRO_STOCK_CONTROL", [$product["name"]])]);
 					}
+				} else {
+					return jsons(["status" => 400, "msg" => "商品库存校验暂不可用，请稍后重试"]);
 				}
 			}
 			$host_data = json_decode($product["host"], true);

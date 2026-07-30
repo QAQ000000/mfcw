@@ -294,7 +294,7 @@ sourceMatches(
 	"transactional configuration changes must invalidate after commit"
 );
 sourceContains($root . "/app/admin/controller/CurrencyController.php", [
-	"private function invalidateProductCatalogCache()",
+	'private function invalidateProductCatalogCache($incrementVersion = false)',
 	'(new \\app\\common\\logic\\Product())->invalidateCacheOrMarkDirty($pids ?: [], "currency commit");',
 	'cache("shd_cron_currency_rate", null);',
 	'Failed to invalidate product cache after currency commit',
@@ -309,9 +309,12 @@ preg_match('/public function updateRate\(\).*?private function getRate/s', $curr
 assertTrue(strpos($rateMethod[0], 'invalidateProductCatalogCache') === false, "rate-only updates must not invalidate every product cache");
 sourceMatches(
 	$root . "/app/admin/controller/CurrencyController.php",
-	'/Db::commit\(\);\s*\$this->invalidateProductCatalogCache\(\);/',
+	'/Db::commit\(\);\s*if \(\$invalidateCatalog\) \{\s*\$this->invalidateProductCatalogCache\(true\);/',
 	"bulk repricing must invalidate after commit"
 );
+sourceContains($root . "/app/admin/controller/CurrencyController.php", [
+	'if ($res || $pricingUpdated) {',
+]);
 sourceContains($root . "/app/admin/command/Cron.php", [
 	'(new \\app\\common\\logic\\Product())->retryDirtyCacheInvalidation();',
 ]);

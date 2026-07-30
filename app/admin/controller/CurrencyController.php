@@ -138,8 +138,9 @@ class CurrencyController extends AdminBaseController
 				return jsonrule(["status" => 400, "msg" => lang("CURRENCY_EXIST")]);
 			}
 			$exist = \think\Db::name("currencies")->where("id", $id)->find();
-			if (isset($param["updatepricing"]) && $param["updatepricing"] == "on") {
-				$result = $this->currencyUpdatePricing($id);
+			$pricingUpdated = isset($param["updatepricing"]) && $param["updatepricing"] == "on";
+			if ($pricingUpdated) {
+				$result = $this->currencyUpdatePricing($id, false);
 				if (!$result) {
 					return jsonrule(["status" => 400, "msg" => lang("UPDATE_PRICE_FAIL")]);
 				}
@@ -166,8 +167,8 @@ class CurrencyController extends AdminBaseController
 				$dev .= "没有任何修改";
 			}
 			active_log(sprintf($this->lang["Currency_admin_updateCurrency"], $id, $dev));
-			if ($res) {
-				$this->invalidateProductCatalogCache();
+			if ($res || $pricingUpdated) {
+					$this->invalidateProductCatalogCache($pricingUpdated || $exist["default"] == 1 && $exist["code"] != $currency["code"]);
 				return jsonrule(["status" => 200, "msg" => lang("UPDATE SUCCESS")]);
 			} else {
 				return jsonrule(["status" => 400, "msg" => lang("UPDATE FAIL")]);
@@ -199,7 +200,7 @@ class CurrencyController extends AdminBaseController
 					\think\Db::name("currencies")->where("id", $id)->delete();
 					\think\Db::name("pricing")->where("currency", $id)->delete();
 					\think\Db::commit();
-					$this->invalidateProductCatalogCache();
+				$this->invalidateProductCatalogCache(true);
 					active_log(sprintf($this->lang["Currency_admin_deleteCurrency"], $id));
 				} catch (\Exception $e) {
 					\think\Db::rollback();
@@ -294,7 +295,7 @@ class CurrencyController extends AdminBaseController
 			\think\Db::name("currencies")->where("default", 1)->update(["default" => 0]);
 			\think\Db::name("currencies")->where("id", intval($id))->update(["default" => 1]);
 			\think\Db::commit();
-			$this->invalidateProductCatalogCache();
+				$this->invalidateProductCatalogCache(true);
 			active_log(sprintf($this->lang["Currency_admin_default"], $id));
 		} catch (\Exception $e) {
 			\think\Db::rollback();
@@ -319,7 +320,7 @@ class CurrencyController extends AdminBaseController
 			return jsonrule(["status" => 400, "msg" => lang("UPDATE_PRICE_FAIL")]);
 		}
 	}
-	private function currencyUpdatePricing($currencyid = "")
+	private function currencyUpdatePricing($currencyid = "", $invalidateCatalog = true)
 	{
 		$defaultid = \think\Db::name("currencies")->where("default", 1)->value("id");
 		if ($currencyid) {
@@ -353,18 +354,23 @@ class CurrencyController extends AdminBaseController
 				}
 			}
 			\think\Db::commit();
-			$this->invalidateProductCatalogCache();
+			if ($invalidateCatalog) {
+				$this->invalidateProductCatalogCache(true);
+			}
 		} catch (\Exception $e) {
 			\think\Db::rollback();
 			return false;
 		}
 		return true;
 	}
-	private function invalidateProductCatalogCache()
-	{
-			try {
-				$pids = \think\Db::name("products")->column("id");
-				return (new \app\common\logic\Product())->invalidateCacheOrMarkDirty($pids ?: [], "currency commit");
+		private function invalidateProductCatalogCache($incrementVersion = false)
+		{
+				try {
+					$pids = \think\Db::name("products")->column("id");
+					if ($incrementVersion && !empty($pids)) {
+						\think\Db::name("products")->whereIn("id", $pids)->setInc("location_version");
+					}
+					return (new \app\common\logic\Product())->invalidateCacheOrMarkDirty($pids ?: [], "currency commit");
 			} catch (\Throwable $e) {
 			error_log("Failed to invalidate product cache after currency commit: " . $e->getMessage());
 			return false;

@@ -34,8 +34,8 @@ think\facade\Route::post("api/oauth/accountGetAccessToken", "api/oauth/accountGe
 think\facade\Route::post("api/oauth/automaticGetAccessToken", "api/oauth/automaticGetAccessToken");
 think\facade\Route::get("api/oauth/getUserInfo", "api/oauth/getUserInfo");
 think\facade\Route::post("api/botMessage", "api/Bot/botMessage");
-think\facade\Route::get("api/product/proinfo", "api/product/proInfo");
-think\facade\Route::get("api/product/prodetail", "api/product/proDetail");
+    think\facade\Route::get("api/product/proinfo", "api/product/proInfo")->middleware("Check");
+    think\facade\Route::get("api/product/prodetail", "api/product/proDetail")->middleware("Check");
 think\facade\Route::get("api/product/list", "api/product/proList");
 think\facade\Route::get("api/product/upgrade_product", "api/product/getUpgradeProduct")->middleware("Check");
 think\facade\Route::get("api/product/:id", "api/product/detail")->middleware("Check");

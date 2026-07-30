@@ -420,9 +420,12 @@ class ProductController extends AdminBaseController
 					$customfields_change = true;
 				}
 			}
-			if (!empty($param["id"])) {
-				$id = $param["id"];
-				\think\Db::name("product_groups")->where("id='{$id}'")->update($data);
+				if (!empty($param["id"])) {
+					$id = $param["id"];
+					\think\Db::name("product_groups")->where("id='{$id}'")->update($data);
+					if (intval($data["hidden"]) !== intval($pg["hidden"])) {
+						$this->syncVisibilityToDownstream(\think\Db::name("products")->where("gid", $id)->column("id"), "product group visibility changed");
+					}
 				if (isset($customfields_change) && $customfields_change === true) {
 					\think\Db::name("product_groups_customfields")->where("relid", $id)->delete();
 					if (!empty($param["customfields"])) {
@@ -577,9 +580,13 @@ class ProductController extends AdminBaseController
 					$customfields_change = true;
 				}
 			}
-			if (!empty($param["id"])) {
-				$id = $param["id"];
-				\think\Db::name("product_first_groups")->where("id='{$id}'")->update($data);
+				if (!empty($param["id"])) {
+					$id = $param["id"];
+					\think\Db::name("product_first_groups")->where("id='{$id}'")->update($data);
+					if (intval($data["hidden"]) !== intval($pg["hidden"])) {
+						$pids = \think\Db::name("products")->alias("p")->leftJoin("product_groups g", "g.id=p.gid")->where("g.gid", $id)->column("p.id");
+						$this->syncVisibilityToDownstream($pids, "product first group visibility changed");
+					}
 				if (isset($customfields_change) && $customfields_change === true) {
 					\think\Db::name("product_first_groups_customfields")->where("relid", $id)->delete();
 					if (!empty($param["customfields"])) {
@@ -3734,5 +3741,14 @@ class ProductController extends AdminBaseController
 	private function invalidateProductCatalogAfterCommit($pids, $context)
 	{
 		return (new \app\common\logic\Product())->invalidateCacheOrMarkDirty($pids, $context);
+	}
+	private function syncVisibilityToDownstream($pids, $context)
+	{
+		$pids = array_values(array_unique(array_filter(array_map("intval", (array) $pids))));
+		if (empty($pids)) {
+			return true;
+		}
+		\think\Db::name("products")->whereIn("id", $pids)->setInc("location_version");
+		return $this->invalidateProductCatalogAfterCommit($pids, $context);
 	}
 }

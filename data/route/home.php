@@ -286,13 +286,13 @@ think\facade\Route::group("", function () {
     think\facade\Route::post("zjmf_api_login", "home/login/zjmfApiLogin");
     think\facade\Route::post("resource_login_supplier", "home/login/resourceLogin");
     think\facade\Route::any("loginAccessToken", "home/ViewClients/loginAccessToken");
-    think\facade\Route::get("cart/all", "home/cart/getProducts");
-    think\facade\Route::get("cart/get_product_config", "home/cart/getProductConfig");
+    think\facade\Route::get("cart/all", "home/cart/getProducts")->middleware("Check");
+    think\facade\Route::get("cart/get_product_config", "home/cart/getProductConfig")->middleware("Check");
     think\facade\Route::get("cart/summary", "home/Cart/summary");
     think\facade\Route::get("cart/ontrialmax", "home/Cart/ontrialAndMax");
     think\facade\Route::get("cart/hostinfo", "home/Cart/hostInfo");
     think\facade\Route::get("cart/credit", "home/Cart/getCredit");
-    think\facade\Route::get("cart/stock_control", "home/Cart/getQty");
+    think\facade\Route::get("cart/stock_control", "home/Cart/getQty")->middleware("Check");
 	think\facade\Route::post("cart/resource_product", "home/Cart/postResourceProduct");
 	think\facade\Route::post("cart/createproducts", "home/Cart/postCreateProducts");
 	think\facade\Route::post("cart/productsgroups", "home/Cart/postProductGroups");

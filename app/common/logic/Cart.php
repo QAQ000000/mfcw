@@ -26,10 +26,11 @@ class Cart
 	}
 	public function getProductCycle($pid, $currencyid)
 	{
-		$product = \think\Db::name("products")->field("id,name,description,pay_type,host,password,allow_qty,stock_control,qty,type")->where("id", $pid)->find();
+		$product = \think\Db::name("products")->field("id,name,description,pay_type,host,password,allow_qty,api_type,stock_control,qty,upstream_stock_control,upstream_qty,type")->where("id", $pid)->find();
 		$product = array_map(function ($v) {
 			return is_string($v) ? htmlspecialchars_decode($v, ENT_QUOTES) : $v;
 		}, $product);
+		$product = Product::normalizeSupplierProductState($product);
 		$product["host"] = json_decode($product["host"], true);
 		$product["host"]["host"] = generateHostName($product["host"]["prefix"], $product["host"]["rule"], $product["host"]["show"]);
 		$product["password"] = json_decode($product["password"], true);

@@ -15,12 +15,20 @@ class Product
 	{
 		$where = function (\think\db\Query $query) use($pids) {
 			if (!empty($pids)) {
-				$query->whereIn("id", $pids);
+				$query->whereIn("p.id", $pids);
 			}
 		};
-		$products = \think\Db::name("products")->where($where)->select()->toArray();
+		$products = \think\Db::name("products")
+			->alias("p")
+			->leftJoin("product_groups g", "g.id=p.gid")
+			->leftJoin("product_first_groups fg", "fg.id=g.gid")
+			->field("p.*,g.hidden as supplier_group_hidden,fg.hidden as supplier_first_group_hidden")
+			->where($where)
+			->select()
+			->toArray();
 		$products_filter = [];
 		foreach ($products as $product) {
+			$product = self::normalizeSupplierProductState($product);
 			$id = $product["id"];
 			$fields = \think\Db::name("customfields")->field("id,fieldname,description,fieldtype,fieldoptions,regexpr,required,showorder,showinvoice,sortorder,showdetail")->where("type", "product")->where("relid", $id)->where("adminonly", 0)->where("showorder", 1)->order("sortorder desc")->select()->toArray();
 			$product_pricings = \think\Db::name("pricing")->alias("a")->field("a.*,b.code")->leftJoin("currencies b", "a.currency = b.id")->where("a.type", "product")->where("a.relid", $id)->where("b.default", 1)->select()->toArray();
@@ -50,6 +58,39 @@ class Product
 		}
 		return $products_filter;
 	}
+	public static function normalizeSupplierProductState($product)
+	{
+		$product = (array) $product;
+		$localControl = intval($product["stock_control"] ?? 0) === 1;
+		$upstreamControl = ($product["api_type"] ?? "") === "zjmf_api"
+			&& intval($product["upstream_stock_control"] ?? 0) === 1;
+		$localQty = max(0, intval($product["qty"] ?? 0));
+		$upstreamQty = max(0, intval($product["upstream_qty"] ?? 0));
+		if ($localControl && $upstreamControl) {
+			$stockControl = 1;
+			$qty = min($localQty, $upstreamQty);
+		} elseif ($upstreamControl) {
+			$stockControl = 1;
+			$qty = $upstreamQty;
+		} elseif ($localControl) {
+			$stockControl = 1;
+			$qty = $localQty;
+		} else {
+			$stockControl = 0;
+			$qty = 0;
+		}
+		$product["stock_control"] = $stockControl;
+		$product["qty"] = $qty;
+		if (($product["api_type"] ?? "") === "zjmf_api") {
+			$product["upstream_stock_control"] = $stockControl;
+			$product["upstream_qty"] = $qty;
+		}
+		$product["hidden"] = intval($product["hidden"] ?? 0)
+			|| intval($product["supplier_group_hidden"] ?? 0)
+			|| intval($product["supplier_first_group_hidden"] ?? 0) ? 1 : 0;
+		unset($product["supplier_group_hidden"], $product["supplier_first_group_hidden"]);
+		return $product;
+	}
 	public function updateDetailCache($pids = [])
 	{
 		$pids = $this->normalizeProductIds($pids);
@@ -75,6 +116,7 @@ class Product
 		}
 		foreach ($pids as $pid) {
 			$tmp = $this->getProducts([$pid]);
+			$tmp["__supplier_state_version"] = 1;
 			if (cache($this->detail_name . $pid, json_encode($tmp)) === false) {
 				return false;
 			}
@@ -109,7 +151,12 @@ class Product
 	public function getDetailCache($pid)
 	{
 		$tmp = cache($this->detail_name . $pid);
-		return json_decode($tmp, true);
+		$detail = json_decode($tmp, true);
+		if (!empty($detail) && !isset($detail["__supplier_state_version"])) {
+			return [];
+		}
+		unset($detail["__supplier_state_version"]);
+		return $detail;
 	}
 	public function updateInfoCache()
 	{
@@ -130,7 +177,25 @@ class Product
 	}
 	private function updateInfoCacheUnlocked()
 	{
-		$infos = \think\Db::name("products")->field("id,name,location_version,stock_control,qty")->select()->toArray();
+		$products = \think\Db::name("products")
+			->alias("p")
+			->leftJoin("product_groups g", "g.id=p.gid")
+			->leftJoin("product_first_groups fg", "fg.id=g.gid")
+			->field("p.id,p.name,p.location_version,p.api_type,p.stock_control,p.qty,p.upstream_stock_control,p.upstream_qty,p.hidden,g.hidden as supplier_group_hidden,fg.hidden as supplier_first_group_hidden")
+			->select()
+			->toArray();
+		$infos = [];
+		foreach ($products as $product) {
+			$product = self::normalizeSupplierProductState($product);
+			$infos[] = [
+				"id" => $product["id"],
+				"name" => $product["name"],
+				"location_version" => $product["location_version"],
+				"stock_control" => $product["stock_control"],
+				"qty" => $product["qty"],
+				"supplier_state_version" => 1,
+			];
+		}
 		if (cache($this->info_name, json_encode($infos)) === false) {
 			return false;
 		}
@@ -140,7 +205,15 @@ class Product
 	public function getInfoCache()
 	{
 		$tmp = cache($this->info_name);
-		return json_decode($tmp, true);
+		$infos = json_decode($tmp, true);
+		if (!empty($infos) && !isset($infos[0]["supplier_state_version"])) {
+			return [];
+		}
+		foreach ((array) $infos as &$info) {
+			unset($info["supplier_state_version"]);
+		}
+		unset($info);
+		return $infos;
 	}
 	public function deleteInfoCache()
 	{
@@ -430,9 +503,10 @@ class Product
 			return false;
 		}
 		try {
-			$rows = \think\Db::name("products")->field("id,stock_control,qty")->whereIn("id", $pids)->select()->toArray();
+			$rows = \think\Db::name("products")->field("id,api_type,stock_control,qty,upstream_stock_control,upstream_qty")->whereIn("id", $pids)->select()->toArray();
 			$inventory = [];
 			foreach ($rows as $row) {
+				$row = self::normalizeSupplierProductState($row);
 				$inventory[intval($row["id"])] = ["stock_control" => intval($row["stock_control"]), "qty" => intval($row["qty"])];
 			}
 			$infos = $this->getInfoCache();
@@ -895,6 +969,7 @@ class Product
 	}
 	public function baseUpdateProduct($upstream_product, $product, $rate = 1, $is_cron = false)
 	{
+		$upstream_product = self::normalizeSupplierProductState($upstream_product);
 		$upstream_data = $upstream_product;
 		$zjmf_finance_api_id = $product["zjmf_api_id"];
 		$upstream_pid = $product["upstream_pid"];
@@ -907,7 +982,7 @@ class Product
 		if ($is_cron) {
 			$pay_type["clientscount_rule"] = $pay_type_local["clientscount_rule"];
 		}
-		$basedata = ["type" => $upstream_product["type"], "password" => $upstream_product["password"], "auto_setup" => "payment", "auto_terminate_days" => $upstream_product["auto_terminate_days"], "config_options_upgrade" => $upstream_product["config_options_upgrade"], "down_configoption_refund" => $upstream_product["down_configoption_refund"], "retired" => $upstream_product["retired"], "is_featured" => $upstream_product["is_featured"], "groupid" => $upstream_product["groupid"], "api_type" => "zjmf_api", "location_version" => $product["location_version"] + 1, "upstream_version" => $upstream_product["location_version"], "zjmf_api_id" => $zjmf_finance_api_id, "server_group" => $zjmf_finance_api_id, "upstream_pid" => $upstream_pid, "hidden" => intval($upstream_product["hidden"]), "pay_method" => $upstream_product["pay_method"], "rate" => $rate, "upstream_stock_control" => $upstream_product["upstream_stock_control"], "upstream_qty" => $upstream_product["qty"], "stock_control" => 0, "qty" => 0, "upstream_auto_setup" => $upstream_product["auto_setup"], "upstream_ontrial_status" => intval($pay_type["pay_ontrial_status"]), "upstream_product_shopping_url" => $upstream_product["product_shopping_url"] ?: ""];
+		$basedata = ["type" => $upstream_product["type"], "password" => $upstream_product["password"], "auto_setup" => "payment", "auto_terminate_days" => $upstream_product["auto_terminate_days"], "config_options_upgrade" => $upstream_product["config_options_upgrade"], "down_configoption_refund" => $upstream_product["down_configoption_refund"], "retired" => $upstream_product["retired"], "is_featured" => $upstream_product["is_featured"], "groupid" => $upstream_product["groupid"], "api_type" => "zjmf_api", "location_version" => $product["location_version"] + 1, "upstream_version" => $upstream_product["location_version"], "zjmf_api_id" => $zjmf_finance_api_id, "server_group" => $zjmf_finance_api_id, "upstream_pid" => $upstream_pid, "hidden" => intval($upstream_product["hidden"]), "pay_method" => $upstream_product["pay_method"], "rate" => $rate, "upstream_stock_control" => $upstream_product["stock_control"], "upstream_qty" => $upstream_product["qty"], "stock_control" => 0, "qty" => 0, "upstream_auto_setup" => $upstream_product["auto_setup"], "upstream_ontrial_status" => intval($pay_type["pay_ontrial_status"]), "upstream_product_shopping_url" => $upstream_product["product_shopping_url"] ?: ""];
 		$upstream_host = json_decode($upstream_product["host"], true);
 		if ($upstream_host["show"] == 0) {
 			$basedata["host"] = $upstream_product["host"];

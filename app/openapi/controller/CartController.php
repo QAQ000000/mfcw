@@ -257,10 +257,11 @@ class CartController extends \cmf\controller\HomeBaseController
 			return json(["status" => 400, "msg" => "Billingcycle error"]);
 		}
 		$setupfeecycle = $cart->changeCycleToupfee($billingcycle);
-		$product = \think\Db::name("products")->alias("a")->field("a.id as productid,a.name,a.pay_type,b.*,a.api_type,a.upstream_version,a.upstream_price_type,a.upstream_price_value,a.hidden,a.stock_control,a.qty")->leftJoin("pricing b", "a.id = b.relid")->where("a.id", $pid)->where("b.type", "product")->where("b.currency", $currencyid)->find();
+		$product = \think\Db::name("products")->alias("a")->field("a.id as productid,a.name,a.pay_type,b.*,a.api_type,a.upstream_version,a.upstream_price_type,a.upstream_price_value,a.hidden,a.stock_control,a.qty,a.upstream_stock_control,a.upstream_qty")->leftJoin("pricing b", "a.id = b.relid")->where("a.id", $pid)->where("b.type", "product")->where("b.currency", $currencyid)->find();
 		if (!$product) {
 			return json(["status" => 400, "msg" => "Product Dose Not Exist"]);
 		}
+		$product = \app\common\logic\Product::normalizeSupplierProductState($product);
 		if ($product["api_type"] == "zjmf_api" && $product["upstream_price_type"] == "percent") {
 			$is_ajmf_api = true;
 		} else {
@@ -395,7 +396,7 @@ class CartController extends \cmf\controller\HomeBaseController
 			return json(["msg" => "Inventory shortage", "status" => 400]);
 		}
 		if ($product["api_type"] == "zjmf_api" || $product["api_type"] == "resource") {
-			$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 30, "GET");
+			$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 3, "GET");
 			if ($result["status"] == 200) {
 				$upstream_data = $result["data"];
 				if (empty($upstream_data["product"])) {
@@ -406,9 +407,11 @@ class CartController extends \cmf\controller\HomeBaseController
 						(new \app\common\logic\Product())->invalidateCacheOrMarkDirty([$pid], "upstream product hidden in openapi cart");
 						return json(["status" => 400, "msg" => "Product does not exist"]);
 				}
-				if ($upstream_data["product"]["stock_control"] && $upstream_data["product"]["qty"] <= 0) {
+				if ($upstream_data["product"]["stock_control"] && $upstream_data["product"]["qty"] < $qty) {
 					return json(["status" => 400, "msg" => "Inventory shortage"]);
 				}
+			} else {
+				return json(["status" => 400, "msg" => "Inventory validation is temporarily unavailable"]);
 			}
 		}
 		$host_data = json_decode($product["host"], true);
@@ -1629,10 +1632,11 @@ class CartController extends \cmf\controller\HomeBaseController
 			return json(["status" => 400, "msg" => lang("CART_GETTOTAL_PRICE_ERROR")]);
 		}
 		$setupfeecycle = $cart->changeCycleToupfee($billingcycle);
-		$product = \think\Db::name("products")->alias("a")->field("a.id as productid,a.name,a.pay_type,b.*,a.api_type,a.upstream_version,a.upstream_price_type,a.upstream_price_value,a.hidden,a.stock_control,a.qty")->leftJoin("pricing b", "a.id = b.relid")->where("a.id", $pid)->where("b.type", "product")->where("b.currency", $currencyid)->find();
+		$product = \think\Db::name("products")->alias("a")->field("a.id as productid,a.name,a.pay_type,b.*,a.api_type,a.upstream_version,a.upstream_price_type,a.upstream_price_value,a.hidden,a.stock_control,a.qty,a.upstream_stock_control,a.upstream_qty")->leftJoin("pricing b", "a.id = b.relid")->where("a.id", $pid)->where("b.type", "product")->where("b.currency", $currencyid)->find();
 		if (!$product) {
 			return json(["status" => 400, "msg" => lang("CART_GETTOTAL_PRODUCT_ERROR")]);
 		}
+		$product = \app\common\logic\Product::normalizeSupplierProductState($product);
 		if ($product["api_type"] == "zjmf_api" && $product["upstream_price_type"] == "percent") {
 			$is_ajmf_api = true;
 		} else {
@@ -2008,7 +2012,7 @@ class CartController extends \cmf\controller\HomeBaseController
 			return json(["msg" => lang("CART_SETTLE_PRO_STOCK_CONTROL", [$product["name"]]), "status" => 400]);
 		}
 		if ($product["api_type"] == "zjmf_api" || $product["api_type"] == "resource") {
-			$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 30, "GET");
+			$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 3, "GET");
 			if ($result["status"] == 200) {
 				$upstream_data = $result["data"];
 				if (empty($upstream_data["product"])) {
@@ -2019,9 +2023,11 @@ class CartController extends \cmf\controller\HomeBaseController
 						(new \app\common\logic\Product())->invalidateCacheOrMarkDirty([$pid], "upstream product hidden in openapi cart");
 						return json(["status" => 400, "msg" => "商品不存在"]);
 				}
-				if ($upstream_data["product"]["stock_control"] && $upstream_data["product"]["qty"] <= 0) {
+				if ($upstream_data["product"]["stock_control"] && $upstream_data["product"]["qty"] < $qty) {
 					return json(["status" => 400, "msg" => lang("CART_SETTLE_PRO_STOCK_CONTROL", [$product["name"]])]);
 				}
+			} else {
+				return json(["status" => 400, "msg" => "商品库存校验暂不可用，请稍后重试"]);
 			}
 		}
 		$host_data = json_decode($product["host"], true);
