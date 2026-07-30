@@ -28,6 +28,64 @@ class ProvisionController extends CommonController
 		}
 		return ["status" => 400, "msg" => $fallback];
 	}
+	private function supplierProxySuccess($host, $response, $fallback, $allowedFields = [])
+	{
+		$result = [
+			"status" => 200,
+			"msg" => $this->clientSafeModuleMessage($host, $response["msg"] ?? "", $fallback),
+		];
+		foreach ($allowedFields as $field) {
+			if (array_key_exists($field, $response)) {
+				$result[$field] = $response[$field];
+			}
+		}
+		return $result;
+	}
+	private function supplierCustomRows($rows, $allowedFields)
+	{
+		$result = [];
+		if (!is_array($rows)) {
+			return $result;
+		}
+		foreach ($rows as $row) {
+			if (!is_array($row)) {
+				continue;
+			}
+			$filtered = [];
+			foreach ($allowedFields as $field) {
+				if (array_key_exists($field, $row) && !is_array($row[$field]) && !is_object($row[$field])) {
+					$filtered[$field] = $row[$field];
+				}
+			}
+			$result[] = $filtered;
+		}
+		return $result;
+	}
+	private function supplierCustomSuccess($host, $response, $func)
+	{
+		$result = $this->supplierProxySuccess($host, $response, "操作成功");
+		switch ($func) {
+			case "listSnapBackup":
+				$result["data"] = $this->supplierCustomRows($response["data"] ?? [], [
+					"id", "type", "status", "disk_name", "remarks", "create_time",
+				]);
+				break;
+			case "showSecurityRules":
+				$rows = is_array($response["list"] ?? null) ? $response["list"] : [];
+				$rows = array_filter($rows, function ($row) {
+					return is_array($row) && intval($row["lock"] ?? 0) !== 1;
+				});
+				$result["list"] = $this->supplierCustomRows(array_values($rows), [
+					"id", "description", "action", "direction", "protocol", "port", "start_port",
+					"end_port", "ip", "start_ip", "end_ip", "priority",
+				]);
+				break;
+			case "remoteInfo":
+				$result["data"] = ["rescue" => empty($response["data"]["rescue"]) ? 0 : 1];
+				break;
+		}
+		return $result;
+	}
 	/**
 	 * @title 执行模块默认方法
 	 * @description 执行开机,关机,重启,重装系统
@@ -460,10 +518,14 @@ class ProvisionController extends CommonController
 			$provision = new \app\common\logic\Provision();
 			$res = $provision->execCustomFunc($func, $id);
 		}
-		$result = $res;
-		if (($res["status"] ?? "") == "success" || ($res["status"] ?? 0) == 200) {
-			$result["status"] = 200;
-			$result["msg"] = $this->clientSafeModuleMessage($host, $res["msg"] ?? "", "操作成功");
+			$result = $res;
+			if (($res["status"] ?? "") == "success" || ($res["status"] ?? 0) == 200) {
+				if ($this->isSupplierHost($host)) {
+					$result = $this->supplierCustomSuccess($host, $res, $func);
+				} else {
+					$result["status"] = 200;
+					$result["msg"] = $res["msg"] ?? "操作成功";
+				}
 		} else {
 			if ($this->isSupplierHost($host)) {
 				$result = $this->supplierProxyFailure($host, "执行模块自定义方法", $res, "操作失败，请稍后重试或联系管理员");
@@ -611,10 +673,9 @@ class ProvisionController extends CommonController
 			$result["status"] = 400;
 			$result["msg"] = "接口类型错误";
 		}
-		if ($this->isSupplierHost($host)) {
-			if (($result["status"] ?? 400) == 200 || ($result["status"] ?? "") === "success") {
-				$result["status"] = 200;
-				$result["msg"] = "操作成功";
+			if ($this->isSupplierHost($host)) {
+				if (($result["status"] ?? 400) == 200 || ($result["status"] ?? "") === "success") {
+					$result = $this->supplierProxySuccess($host, $result, "操作成功", ["url"]);
 			} else {
 				$result = $this->supplierProxyFailure($host, "执行模块自定义按钮", $result, "操作失败，请稍后重试或联系管理员");
 			}

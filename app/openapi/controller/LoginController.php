@@ -181,7 +181,7 @@ class LoginController extends \cmf\controller\HomeBaseController
 					}
 				}
 			}
-			$client = $clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username")->where("phonenumber", $data["phone"])->find();
+			$client = $clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username,email_remind,is_login_sms_reminder")->where("phonenumber", $data["phone"])->find();
 			if (empty($client)) {
 				return json(["status" => 400, "msg" => "Account does not exist"]);
 			}
@@ -218,7 +218,7 @@ class LoginController extends \cmf\controller\HomeBaseController
 					}
 				}
 			}
-			$client = $clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username")->where("phonenumber", $data["phone"])->find();
+			$client = $clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username,email_remind,is_login_sms_reminder")->where("phonenumber", $data["phone"])->find();
 			if (empty($client)) {
 				return json(["status" => 400, "msg" => "Account does not exist"]);
 			}
@@ -254,7 +254,7 @@ class LoginController extends \cmf\controller\HomeBaseController
 					}
 				}
 			}
-			$client = $clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username")->where("email", $data["email"])->find();
+			$client = $clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username,email_remind,is_login_sms_reminder")->where("email", $data["email"])->find();
 			if (empty($client)) {
 				return json(["status" => 400, "msg" => "Account does not exist"]);
 			}
@@ -287,7 +287,7 @@ class LoginController extends \cmf\controller\HomeBaseController
 					}
 				}
 			}
-			$client = $clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username")->where("id", $data["id"])->find();
+			$client = $clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username,email_remind,is_login_sms_reminder")->where("id", $data["id"])->find();
 			if (empty($client)) {
 				return json(["status" => 400, "msg" => "Account does not exist"]);
 			}
@@ -560,7 +560,7 @@ class LoginController extends \cmf\controller\HomeBaseController
 			if (!configuration("allow_login_phone")) {
 				return json(["status" => 400, "msg" => "The mobile phone login function is not turned on, and the password cannot be retrieved with the mobile phone"]);
 			}
-			$client = $clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username")->where("phonenumber", $data["phone"])->find();
+			$client = $clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username,email_remind,is_login_sms_reminder")->where("phonenumber", $data["phone"])->find();
 			if (empty($client)) {
 				return json(["status" => 400, "msg" => "Account does not exist"]);
 			}
@@ -600,7 +600,7 @@ class LoginController extends \cmf\controller\HomeBaseController
 			if (!configuration("allow_login_email")) {
 				return json(["status" => 400, "msg" => "The email login function is not turned on, and the email cannot be used to retrieve the password"]);
 			}
-			$client = $clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username")->where("email", $data["email"])->find();
+			$client = $clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username,email_remind,is_login_sms_reminder")->where("email", $data["email"])->find();
 			if (empty($client)) {
 				return json(["status" => 400, "msg" => "Account does not exist"]);
 			}

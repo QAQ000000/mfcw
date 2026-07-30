@@ -624,11 +624,14 @@ class UserController extends AdminBaseController
 		if (empty($exist)) {
 			return jsonrule(["status" => 400, "msg" => lang("ID_ERROR")]);
 		}
-		$name = $exist["username"];
-		$key = "admin_user_login_error_num_" . $name;
-		$disable_login_key = "admin_user_disable_login_key_" . $name;
+		$nameKeySuffix = hash("sha256", strtolower(trim((string) $exist["username"])));
+		$ipKeySuffix = hash("sha256", (string) long2ip($exist["ip"]));
+		$key = "admin_user_login_error_num_" . $nameKeySuffix;
+		$disable_login_key = "admin_user_disable_login_key_" . $nameKeySuffix;
+		$ip_error_key = "admin_ip_login_error_num_" . $ipKeySuffix;
 		\think\facade\Cache::rm($key);
 		\think\facade\Cache::rm($disable_login_key);
+		\think\facade\Cache::rm($ip_error_key);
 		\think\Db::name("blacklist")->where("id", $id)->delete();
 		return jsonrule(["status" => 200, "msg" => lang("DELETE SUCCESS")]);
 	}

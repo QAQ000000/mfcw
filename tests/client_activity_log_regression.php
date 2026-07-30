@@ -192,11 +192,11 @@ namespace {
         '3.5.8.2,商品缓存重试状态存储修复,3.5.8.2.sql',
         'the durable pending-ID table migration must run for existing 3.5.8.1 installations'
     );
-    assertSourceContains(
-        'app/api/controller/UpgradeSystemController.php',
-        'Database upgrade postcondition failed: activity_log.client_visible DEFAULT 0 is missing',
-        'the API upgrade runner must refuse to advance the version after a failed migration'
-    );
+	assertSourceContains(
+		'public/upgrade/upgrade.php',
+		'数据库升级校验失败，版本号未更新',
+		'the CLI upgrade runner must refuse to advance the version after a failed migration'
+	);
     assertSourceContains(
         'public/upgrade/upgrade.php',
         'PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION',

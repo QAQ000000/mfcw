@@ -1,10 +1,21 @@
 <?php
-$database = include "../../app/config/database.php";
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    header('Content-Type: text/plain; charset=utf-8');
+    exit;
+}
+if (!in_array('--run', $argv, true)) {
+    fwrite(STDERR, "用法: php upgrade.php --run\n");
+    exit(2);
+}
+
+$database = include dirname(__DIR__, 2) . "/app/config/database.php";
 $host = $database['hostname'];
 $dbname = $database['database'];
 $prefix = $database['prefix']??"shd_";
 if (!preg_match('/^[a-z0-9_]+$/i', $prefix)) {
-    die("Error!: invalid database table prefix<br/>");
+	    fwrite(STDERR, "数据库表前缀不合法，升级已停止\n");
+	    exit(1);
 }
 $user = $database['username'];
 $pass = $database['password'];
@@ -19,14 +30,15 @@ try{
     );
     $dbObject = new PDO("mysql:host={$host};port={$port};dbname={$dbname}",$user,$pass,$opts_values);
 }catch (PDOException $e){
-    print "Error!: " . $e->getMessage() . "<br/>";
-    die();
+    error_log('Database upgrade connection failed: ' . $e->getMessage());
+    fwrite(STDERR, "数据库连接失败，请检查服务端错误日志\n");
+    exit(1);
 }
 $res = $dbObject->query('select*from ' . $prefix . "configuration where setting='update_last_version'")->fetchAll(PDO::FETCH_ASSOC);
 $version = $res[0]['value'];
 if(empty($version)){
-	echo "Error!: 'update_last_version' not found<br/>";
-    exit;
+		fwrite(STDERR, "未找到 update_last_version，升级已停止\n");
+	    exit(1);
 }
 # 内测版
 $system_version_type = $dbObject->query('select*from ' . $prefix . "configuration where setting='system_version_type'")->fetchAll(PDO::FETCH_ASSOC);
@@ -35,10 +47,10 @@ if ($system_version_type[0]['value'] && $system_version_type[0]['value'] == 'bet
     $version = $beta_version[0]['value']??$version;
 }
 if(empty($version)){
-	echo "Error!: 'version' not found<br/>";
-    exit;
+		fwrite(STDERR, "未找到可升级版本，升级已停止\n");
+	    exit(1);
 }
-$handle = fopen('upgrade.log', 'r');
+$handle = fopen(__DIR__ . '/upgrade.log', 'r');
 $content = '';
 while(!feof($handle)){
     $content .= fread($handle, 8080);
@@ -63,7 +75,7 @@ if (version_compare($last_version,$version,'>')){
     foreach ($arr as $v){
         $v = explode(',',$v);
         $sql_version = $v[1];
-        $sql_file = $v[1] . '.sql';
+        $sql_file = __DIR__ . '/' . $v[1] . '.sql';
         if (version_compare($sql_version,$version,'>')){
             if (file_exists($sql_file)){
                 //读取SQL文件
@@ -80,7 +92,9 @@ if (version_compare($last_version,$version,'>')){
                     try{
                         $dbObject->query($sql);
                     }catch (PDOException $e){
-                        echo "升级出错,错误sql:" . $sql . ";错误信息:".$e->getMessage();die;
+                        error_log("Database upgrade failed at version {$sql_version}: " . $e->getMessage());
+                        fwrite(STDERR, "数据库升级失败，版本号未更新，请检查服务端错误日志\n");
+                        exit(1);
                     }
                 }
             }
@@ -89,19 +103,22 @@ if (version_compare($last_version,$version,'>')){
 }
 if (version_compare($last_version, '3.5.8.1', '>=')) {
     $visibilityColumn = $dbObject->query("SHOW COLUMNS FROM `{$prefix}activity_log` LIKE 'client_visible'")->fetch(PDO::FETCH_ASSOC);
-    if (!$visibilityColumn || (string) $visibilityColumn['Default'] !== '0') {
-        die("数据库升级校验失败，版本号未更新<br/>");
-    }
+	    if (!$visibilityColumn || (string) $visibilityColumn['Default'] !== '0') {
+	        fwrite(STDERR, "数据库升级校验失败，版本号未更新\n");
+	        exit(1);
+	    }
 	$dirtyRows = $dbObject->query("SELECT COUNT(*) FROM `{$prefix}configuration` WHERE `setting` = '_product_catalog_cache_dirty'")->fetchColumn();
-	if ((int) $dirtyRows < 1) {
-		die("商品缓存升级校验失败，版本号未更新<br/>");
-	}
+		if ((int) $dirtyRows < 1) {
+			fwrite(STDERR, "商品缓存升级校验失败，版本号未更新\n");
+			exit(1);
+		}
 }
 if (version_compare($last_version, '3.5.8.2', '>=')) {
 	$pendingTable = $dbObject->query("SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = " . $dbObject->quote($prefix . 'product_catalog_cache_pending'))->fetchColumn();
-	if ((int) $pendingTable !== 1) {
-		die("商品缓存待清理表升级校验失败，版本号未更新<br/>");
-	}
+		if ((int) $pendingTable !== 1) {
+			fwrite(STDERR, "商品缓存待清理表升级校验失败，版本号未更新\n");
+			exit(1);
+		}
 }
 if (version_compare($last_version, '3.5.8.3', '>=')) {
 	$expectedIndexes = [
@@ -137,10 +154,25 @@ if (version_compare($last_version, '3.5.8.3', '>=')) {
 				}
 			}
 		}
-	} catch (Throwable $e) {
-		error_log('Database upgrade postcondition failed: ' . $e->getMessage());
-		die("数据库索引升级校验失败，版本号未更新<br/>");
-	}
+		} catch (Throwable $e) {
+			error_log('Database upgrade postcondition failed: ' . $e->getMessage());
+			fwrite(STDERR, "数据库索引升级校验失败，版本号未更新\n");
+			exit(1);
+		}
+}
+if (version_compare($last_version, '3.7.7', '>=')) {
+	$cartIndexStatement = $dbObject->prepare("SELECT COLUMN_NAME AS column_name, SEQ_IN_INDEX AS seq_in_index, SUB_PART AS sub_part, NON_UNIQUE AS non_unique FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = 'uq_cart_session_uid' ORDER BY SEQ_IN_INDEX");
+	$cartIndexStatement->execute([$prefix . 'cart_session']);
+	$cartIndexRows = $cartIndexStatement->fetchAll(PDO::FETCH_ASSOC);
+	$cartIndex = $cartIndexRows[0] ?? [];
+	if (count($cartIndexRows) !== 1
+		|| (string) ($cartIndex['column_name'] ?? '') !== 'uid'
+		|| (int) ($cartIndex['seq_in_index'] ?? 0) !== 1
+		|| (int) ($cartIndex['sub_part'] ?? 0) !== 100
+			|| (int) ($cartIndex['non_unique'] ?? 1) !== 0) {
+			fwrite(STDERR, "购物车并发约束升级校验失败，版本号未更新\n");
+			exit(1);
+		}
 }
 if ($system_version_type[0]['value'] && $system_version_type[0]['value'] == 'beta'){ # 内测版
     $update_sql_beta = "update " . $prefix . "configuration set value='{$last_version}' where setting = 'beta_version'";

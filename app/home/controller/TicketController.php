@@ -229,6 +229,14 @@ class TicketController extends CommonController
 				$service = 0;
 			}
 		}
+		$hook_results = hook("before_create_ticket", $params);
+		if (is_array($hook_results)) {
+			foreach ($hook_results as $hook_result) {
+				if (is_array($hook_result) && isset($hook_result["status"]) && (int) $hook_result["status"] === 400) {
+					return json($hook_result);
+				}
+			}
+		}
 		$data["attachment"] = "";
 		if (isset($params["attachment"][0])) {
 			$upload = new \app\common\logic\Upload();

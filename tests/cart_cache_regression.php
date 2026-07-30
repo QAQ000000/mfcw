@@ -340,10 +340,9 @@ sourceContains($root . "/public/upgrade/upgrade.php", [
 	"product_catalog_cache_pending",
 ]);
 sourceContains($root . "/app/api/controller/UpgradeSystemController.php", [
-	'where("setting", "_product_catalog_cache_dirty")->count()',
-	"intval(\$dirtyRows) < 1",
-	"product catalog dirty generation row is missing",
+	'return $this->autoUpgradeDisabled();',
 ]);
+assertTrue(strpos(file_get_contents($root . "/app/api/controller/UpgradeSystemController.php"), '\\think\\Db::') === false, "the disabled Web upgrader must not execute migration queries");
 sourceContains($root . "/app/api/controller/ProductController.php", [
 	"\$existingPids = empty(\$pids) ? [] : Db::name('products')->whereIn('id', \$pids)->column('id');",
 	'$logic->deleteDetailCache($missingPids);',

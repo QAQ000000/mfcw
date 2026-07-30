@@ -9,7 +9,6 @@ think\facade\Route::group("api", function () {
 })->middleware("ApiCheck");
 think\facade\Route::post("api/host/sync", "api/host/syncInfo");
 think\facade\Route::post("api/ticket_reply/sync", "api/host/syncTicketReply");
-think\facade\Route::post("api/ticket_reply", "api/host/replyTicket");
 think\facade\Route::rule("api/exec_module_func", "api/host/execProvision", "GET|POST");
 think\facade\Route::get("api/install/version", "api/install/sysVersion");
 think\facade\Route::get("api/install/envmonitor", "api/install/envMonitor");
@@ -22,12 +21,13 @@ think\facade\Route::post("api/install/setsite", "api/install/setSite");
 think\facade\Route::post("api/install/installapphooks", "api/install/installAppHooks");
 think\facade\Route::post("api/install/installappuseractions", "api/install/installAppUserActions");
 think\facade\Route::post("api/install/steplast", "api/install/stepLast");
-think\facade\Route::get($domain . "/upgrade/version", "api/upgradeSystem/sysVersion");
-think\facade\Route::get($domain . "/upgrade/autoupdate", "api/upgradeSystem/getAutoUpdate");
-think\facade\Route::get($domain . "/upgrade/checkautoupdate", "api/upgradeSystem/getCheckAutoUpdate");
-think\facade\Route::post($domain . "/upgrade/checkupdateunzip", "api/upgradeSystem/getCheckUpdateUnzip");
-think\facade\Route::post($domain . "/upgrade/checkupdatecopy", "api/upgradeSystem/getCheckUpdateCopy");
-think\facade\Route::get($domain . "/upgrade/sqlupdate", "api/upgradeSystem/getSqlUpdate");
+think\facade\Route::group($domain . "/upgrade", function () {
+    think\facade\Route::get("version", "api/upgradeSystem/sysVersion");
+    think\facade\Route::post("autoupdate", "api/upgradeSystem/getAutoUpdate");
+    think\facade\Route::get("checkautoupdate", "api/upgradeSystem/getCheckAutoUpdate");
+    think\facade\Route::post("checkupdateunzip", "api/upgradeSystem/getCheckUpdateUnzip");
+    think\facade\Route::post("checkupdatecopy", "api/upgradeSystem/getCheckUpdateCopy");
+})->middleware("AdminCheck");
 think\facade\Route::get("api/oauth/logined", "api/oauth/logined");
 think\facade\Route::post("api/oauth/accountGetAccessTokenDirect", "api/oauth/accountGetAccessTokenDirect");
 think\facade\Route::post("api/oauth/accountGetAccessToken", "api/oauth/accountGetAccessToken");
@@ -37,8 +37,10 @@ think\facade\Route::post("api/botMessage", "api/Bot/botMessage");
 think\facade\Route::get("api/product/proinfo", "api/product/proInfo");
 think\facade\Route::get("api/product/prodetail", "api/product/proDetail");
 think\facade\Route::get("api/product/list", "api/product/proList");
-think\facade\Route::get("api/product/:id", "api/product/detail");
+think\facade\Route::get("api/product/upgrade_product", "api/product/getUpgradeProduct")->middleware("Check");
+think\facade\Route::get("api/product/:id", "api/product/detail")->middleware("Check");
 think\facade\Route::get("api/product/:id/resource", "api/product/downloadResource");
-think\facade\Route::get("api/product/upgrade_product", "api/product/getUpgradeProduct");
+think\facade\Route::get("api/flow_packet", "api/flowPacket/flowPacketList");
+think\facade\Route::get("api/flow_packet/:id", "api/flowPacket/flowPacketIndex");
 
 ?>

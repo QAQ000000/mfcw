@@ -69,11 +69,7 @@ foreach ($indexes as $indexName => $definition) {
         strpos($upgradeSql, "= '{$upgradeSignatures[$indexName]}'") !== false,
         "upgrade SQL must compare the exact ordered definition of {$indexName}"
     );
-    assertDatabaseIndexUpgrade(
-        strpos($apiUpgrader, '"' . $indexName . '"') !== false,
-        "API upgrader must validate {$indexName}"
-    );
-    assertDatabaseIndexUpgrade(
+	assertDatabaseIndexUpgrade(
         strpos($standaloneUpgrader, "'{$indexName}'") !== false,
         "standalone upgrader must validate {$indexName}"
     );
@@ -98,17 +94,15 @@ assertDatabaseIndexUpgrade(strpos($upgradeSql, 'queue:191,reserved:NULL,reserved
 assertDatabaseIndexUpgrade(strpos($upgradeSql, 'queue:191,reserved:NULL,id:NULL,available_at:NULL') !== false, 'available-job index must preserve id-first queue ordering');
 
 foreach ($postconditionDefinitions as $definition) {
-    assertDatabaseIndexUpgrade(strpos($apiUpgrader, $definition[0]) !== false, 'API upgrader must retain the exact postcondition definition');
-    assertDatabaseIndexUpgrade(strpos($standaloneUpgrader, $definition[1]) !== false, 'standalone upgrader must retain the exact postcondition definition');
+	assertDatabaseIndexUpgrade(strpos($standaloneUpgrader, $definition[1]) !== false, 'standalone upgrader must retain the exact postcondition definition');
 }
 
-foreach ([$apiUpgrader, $standaloneUpgrader] as $upgrader) {
-    assertDatabaseIndexUpgrade(strpos($upgrader, '3.5.8.3') !== false, 'upgrader must gate the index postcondition at 3.5.8.3');
-    assertDatabaseIndexUpgrade(strpos($upgrader, 'information_schema.TABLES') !== false, 'upgrader must validate target tables');
-    assertDatabaseIndexUpgrade(strpos($upgrader, 'information_schema.STATISTICS') !== false, 'upgrader must inspect index metadata');
-    assertDatabaseIndexUpgrade(strpos($upgrader, 'ORDER BY SEQ_IN_INDEX') !== false, 'upgrader must validate index column order');
-    assertDatabaseIndexUpgrade(strpos($upgrader, 'sub_part') !== false, 'upgrader must validate index prefix lengths');
-    assertDatabaseIndexUpgrade(strpos($upgrader, 'non_unique') !== false, 'upgrader must validate non-unique indexes');
-}
+assertDatabaseIndexUpgrade(strpos($apiUpgrader, '\\think\\Db::') === false, 'disabled Web upgrader must not inspect or modify the database');
+assertDatabaseIndexUpgrade(strpos($standaloneUpgrader, '3.5.8.3') !== false, 'standalone upgrader must gate the index postcondition at 3.5.8.3');
+assertDatabaseIndexUpgrade(strpos($standaloneUpgrader, 'information_schema.TABLES') !== false, 'standalone upgrader must validate target tables');
+assertDatabaseIndexUpgrade(strpos($standaloneUpgrader, 'information_schema.STATISTICS') !== false, 'standalone upgrader must inspect index metadata');
+assertDatabaseIndexUpgrade(strpos($standaloneUpgrader, 'ORDER BY SEQ_IN_INDEX') !== false, 'standalone upgrader must validate index column order');
+assertDatabaseIndexUpgrade(strpos($standaloneUpgrader, 'sub_part') !== false, 'standalone upgrader must validate index prefix lengths');
+assertDatabaseIndexUpgrade(strpos($standaloneUpgrader, 'non_unique') !== false, 'standalone upgrader must validate non-unique indexes');
 
 echo "database index upgrade regression passed\n";

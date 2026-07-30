@@ -812,15 +812,9 @@ class CartController extends CommonController
 					}
 					$rebate_total = bcmul($rebate_total, $v["upstream_price_value"], 2) / 100;
 				}
-				if ($v["api_type"] == "resource") {
-					$grade = resourceUserGradePercent($uid, $v["id"]);
-					$v["product_price"] = bcmul($v["product_price"], $grade / 100, 2);
-					if ($v["ontrial"] == 1) {
-						$v["ontrial_price"] = bcmul($v["ontrial_price"], $grade / 100, 2);
-						$v["ontrial_setup_fee"] = bcmul($v["ontrial_setup_fee"], $grade / 100, 2);
+					if ($v["api_type"] == "resource") {
+						continue;
 					}
-					$rebate_total = bcmul($rebate_total, $grade / 100, 2);
-				}
 				$flag = getSaleProductUser($v["id"], $uid);
 				$v["sale_price"] = $v["bates"] = 0;
 				if ($flag) {
@@ -1127,15 +1121,9 @@ class CartController extends CommonController
 					}
 					$rebate_total = bcmul($rebate_total, $v["upstream_price_value"] / 100, 2);
 				}
-				if ($v["api_type"] == "resource") {
-					$grade = resourceUserGradePercent($uid, $v["id"]);
-					$v["product_price"] = bcmul($v["product_price"], $grade / 100, 2);
-					if ($v["ontrial"] == 1) {
-						$v["ontrial_price"] = bcmul($v["ontrial_price"], $grade / 100, 2);
-						$v["ontrial_setup_fee"] = bcmul($v["ontrial_setup_fee"], $grade / 100, 2);
+					if ($v["api_type"] == "resource") {
+						continue;
 					}
-					$rebate_total = bcmul($rebate_total, $grade / 100, 2);
-				}
 				$flag = getSaleProductUser($v["id"], $uid);
 				$v["sale_price"] = $v["bates"] = 0;
 				$v["has_bates"] = 0;
@@ -1890,12 +1878,15 @@ class CartController extends CommonController
 		$uid = $request->uid;
 		$payment = input("post.payment", "");
 		$checkout = input("post.checkout", 0);
-		$default_payment = \think\Db::name("clients")->where("id", $uid)->value("defaultgateway");
-		$use_credit = input("post.use_credit", 0);
-		$user_info = \think\Db::name("clients")->where("id", $uid)->find();
-		$shop = new \app\common\logic\Shop($uid);
-		$cart = \think\Db::name("cart_session")->where("uid", $uid)->find();
-		$cart_data = $remain_data = json_decode($cart["cart_data"], true);
+			$default_payment = \think\Db::name("clients")->where("id", $uid)->value("defaultgateway");
+			$use_credit = input("post.use_credit", 0);
+			$user_info = \think\Db::name("clients")->where("id", $uid)->find();
+			$cartLock = \app\common\logic\Shop::acquireUserCartLock($uid, 5);
+			if ($cartLock === false) {
+				return jsons(["status" => 409, "msg" => "购物车正在处理中，请稍后重试"]);
+			}
+			$shop = new \app\common\logic\Shop($uid);
+			$cart_data = $remain_data = $shop->getShoppingCart();
 		$pos_param = $this->request->param();
 		$cart_products_filter = [];
 		if (isset($pos_param["pos"]) && is_array($pos_param["pos"]) && !empty($pos_param["pos"])) {
@@ -1919,10 +1910,9 @@ class CartController extends CommonController
 				$new_cart_data = json_encode($remain_data);
 			}
 			$cart_data["products"] = $cart_products_filter;
-		}
-		if (!empty($pos_param["cart_data"])) {
-			\think\Db::name("cart_session")->where("uid", $uid)->update(["cart_data" => "", "update_time" => time()]);
-			$cart_data = [];
+			}
+			if (!empty($pos_param["cart_data"])) {
+				$cart_data = [];
 			$pos_param["cart_data"]["configoptions"] = $shop->configfilter($pos_param["cart_data"]["pid"], $pos_param["cart_data"]["configoptions"]);
 			$cart_data["products"][0] = $pos_param["cart_data"];
 		}
@@ -1931,10 +1921,15 @@ class CartController extends CommonController
 			$result["msg"] = lang("CART_SETTLE_CART_ERROR");
 			return jsons($result);
 		}
-		$cart_data = \app\common\logic\Shop::normalizeCartProductQuantities($cart_data);
-		if ($cart_data === false) {
-			return jsons(["status" => 400, "msg" => "购物车中的产品数量无效，请返回购物车重新选择"]);
-		}
+			$cart_data = \app\common\logic\Shop::normalizeCartProductQuantities($cart_data);
+			if ($cart_data === false) {
+				return jsons(["status" => 400, "msg" => "购物车中的产品数量无效，请返回购物车重新选择"]);
+			}
+			$cartLimit = \app\common\logic\Shop::validateCartProductLimits($cart_data);
+			if ($cartLimit["status"] !== "success") {
+				return jsons(["status" => 400, "msg" => $cartLimit["msg"]]);
+			}
+			$cart_data = $cartLimit["data"];
 		$prod = [];
 		foreach ($cart_data["products"] as $k => $value) {
 			$product = \think\Db::name("products")->field("id,name,is_truename,clientscount,api_type,upstream_pid,zjmf_api_id,pay_type")->where("id", $value["pid"])->find();
@@ -2541,10 +2536,48 @@ class CartController extends CommonController
 			if (request()->is_api == 1) {
 				$downstream_data = input("post.");
 				$is_downstream = (strpos($downstream_data["downstream_url"], "https://") === 0 || strpos($downstream_data["downstream_url"], "http://") === 0) && strlen($downstream_data["downstream_token"]) == 32 && is_numeric($downstream_data["downstream_id"]);
+				if ($is_downstream) {
+					$downstream_create = \think\Db::name("host")->whereLike("stream_info", "%" . $downstream_data["downstream_token"] . "%")->find();
+					if (!empty($downstream_create)) {
+						return jsons(["status" => 1001, "msg" => lang("BUY_SUCCESS"), "data" => ["hostid" => [$downstream_create["id"]]]]);
+					}
+				}
 			}
 			$inventory_product_ids = [];
 			\think\Db::startTrans();
 		try {
+			$inventoryRequirements = [];
+			foreach ($product_items as $item) {
+				$productId = intval($item["productid"]);
+				$inventoryRequirements[$productId] = ($inventoryRequirements[$productId] ?? 0) + intval($item["qty"]);
+			}
+			ksort($inventoryRequirements, SORT_NUMERIC);
+			$productRuntimeRows = \think\Db::name("products")
+				->field("id,name,stock_control,qty,auto_setup,api_type,host,password")
+				->whereIn("id", array_keys($inventoryRequirements))
+				->order("id", "asc")
+				->select()
+				->toArray();
+			$productRuntime = [];
+			foreach ($productRuntimeRows as $row) {
+				$productRuntime[intval($row["id"])] = $row;
+			}
+			foreach ($inventoryRequirements as $productId => $requiredQty) {
+				$r = $productRuntime[$productId] ?? null;
+				if (empty($r)) {
+					throw new \Exception("购物车中的产品不存在");
+				}
+				if (($r["api_type"] ?? "") === "resource") {
+					throw new \Exception("该产品类型在当前版本中不受支持");
+				}
+				if (intval($r["stock_control"]) === 1) {
+					$reserved = \think\Db::name("products")->where("id", $productId)->where("stock_control", 1)->where("qty", ">=", $requiredQty)->setDec("qty", $requiredQty);
+					if (intval($reserved) !== 1) {
+						throw new \Exception("产品{$r["name"]}库存不足");
+					}
+					$inventory_product_ids[] = $productId;
+				}
+			}
 			if (!empty($create_invoice)) {
 				$invoiceid = \think\Db::name("invoices")->insertGetId($invoices_data);
 				if (empty($invoiceid)) {
@@ -2573,26 +2606,16 @@ class CartController extends CommonController
 				unset($v["qty"]);
 				$v["orderid"] = $orderid;
 				$pid = $v["productid"];
-				$rule = \think\Db::name("products")->field("host,password")->where("id", $pid)->find();
+				$rule = $productRuntime[intval($pid)];
 				$host_rule = json_decode($rule["host"], true);
 				$host = $v["host"];
 				$password = $v["password"];
 				unset($v["host"]);
 				$v["password"] = empty($password) ? "" : cmf_encrypt($password);
-				$r = \think\Db::name("products")->field("name,stock_control,qty,auto_setup,api_type")->where("id", $v["productid"])->find();
-				if ($r["stock_control"] == 1 && $r["qty"] < $qtys) {
-					throw new \Exception("产品{$r["name"]}库存不足");
-				}
-				if (empty($v["payment"])) {
-					$v["payment"] = $default_payment ?? "";
-				}
-				if ($r["api_type"] == "resource") {
-					$v["agent_grade"] = resourceUserGradePercent($uid, $v["productid"]);
-					$price_model = \think\Db::name("res_products")->where("productid", $v["productid"])->value("price_type");
-					if ($price_model == "handling") {
-						$v["handling"] = floatval(configuration("shd_resource_handling_model"));
+					$r = $productRuntime[intval($v["productid"])];
+					if (empty($v["payment"])) {
+						$v["payment"] = $default_payment ?? "";
 					}
-				}
 				for ($i = 0; $i < $qtys; $i++) {
 					if ($qtys > 1) {
 						$v["domain"] = generateHostName($host_rule["prefix"], $host_rule["rule"], $host_rule["show"]);
@@ -2641,12 +2664,8 @@ class CartController extends CommonController
 						\think\Db::name("customfieldsvalues")->insertAll($customfields);
 					}
 				}
-					\think\Db::name("products")->where("id", $v["productid"])->where("stock_control", 1)->setDec("qty", $qtys);
-					if ($r["stock_control"] == 1) {
-						$inventory_product_ids[] = intval($v["productid"]);
-					}
-			}
-			\think\Db::name("cart_session")->where("uid", $uid)->update(["cart_data" => $new_cart_data, "update_time" => time()]);
+				}
+			$shop->saveCheckoutRemainder($new_cart_data);
 			if (!empty($promo)) {
 				\think\Db::name("promo_code")->where("id", $promo["id"])->setInc("used");
 			}
@@ -2674,20 +2693,11 @@ class CartController extends CommonController
 				}
 			}
 			if ($is_downstream) {
-				$downstream_create = \think\Db::name("host")->whereLike("stream_info", "%" . $downstream_data["downstream_token"] . "%")->find();
-				if (!empty($downstream_create)) {
-					$result = [];
-					$result["status"] = 1001;
-					$result["msg"] = lang("BUY_SUCCESS");
-					$result["data"]["hostid"] = [$downstream_create["id"]];
-					return jsons($result);
-				} else {
-					$stream_info = [];
-					$stream_info["downstream_url"] = $downstream_data["downstream_url"];
-					$stream_info["downstream_token"] = $downstream_data["downstream_token"];
-					$stream_info["downstream_id"] = $downstream_data["downstream_id"];
-					\think\Db::name("host")->where("id", \intval($all_host[0]))->update(["stream_info" => json_encode($stream_info)]);
-				}
+				$stream_info = [];
+				$stream_info["downstream_url"] = $downstream_data["downstream_url"];
+				$stream_info["downstream_token"] = $downstream_data["downstream_token"];
+				$stream_info["downstream_id"] = $downstream_data["downstream_id"];
+				\think\Db::name("host")->where("id", \intval($all_host[0]))->update(["stream_info" => json_encode($stream_info)]);
 			}
 			if ($invoiceid == 0) {
 				active_logs(sprintf($this->lang["Cart_home_settle_success1"], $orderid), $uid);
@@ -2696,15 +2706,19 @@ class CartController extends CommonController
 				active_logs(sprintf($this->lang["Cart_home_settle_success"], $invoiceid, $orderid), $uid);
 				active_logs(sprintf($this->lang["Cart_home_settle_success"], $invoiceid, $orderid), $uid, "", 2);
 			}
-			\think\Db::commit();
-			$result["status"] = 200;
+				\think\Db::commit();
+				cookie("shop_cookie", null);
+				$result["status"] = 200;
 			$result["msg"] = lang("CART_SETTLE_INCOICES_OK");
-		} catch (\Exception $e) {
+			} catch (\Throwable $e) {
 			$result["status"] = 406;
-			$result["msg"] = $e->getMessage();
-			\think\Db::rollback();
-		}
-			if ($result["status"] != 200) {
+				$result["msg"] = $e->getMessage();
+				\think\Db::rollback();
+			}
+			if ($cartLock instanceof \app\common\logic\ShopDatabaseLock) {
+				$cartLock->release();
+			}
+				if ($result["status"] != 200) {
 				return jsons($result);
 			}
 			if (!empty($inventory_product_ids)) {
@@ -2853,8 +2867,8 @@ class CartController extends CommonController
 			if ($qty === false) {
 				return jsons(["status" => 400, "msg" => "产品数量必须是1至" . \app\common\logic\Shop::MAX_PRODUCT_QUANTITY . "之间的整数"]);
 			}
-			$os = isset($param["os"]) ? $param["os"] : [];
-			$shop = new \app\common\logic\Shop($uid);
+				$os = isset($param["os"]) ? $param["os"] : [];
+				$shop = new \app\common\logic\Shop($uid);
 			$product = \think\Db::name("products")->field("host,password,name,is_truename,stock_control,qty,zjmf_api_id,upstream_pid,api_type")->where("id", $pid)->find();
 			if (!judgeOntrialNum($pid, $uid, $qty) && $billingcycle == "ontrial") {
 				return jsons(["status" => 400, "msg" => lang("CART_ONTRIAL_NUM", [$product["name"]])]);
@@ -3400,10 +3414,13 @@ class CartController extends CommonController
 		$uid = $request->uid;
 		if (!is_array($param["i"])) {
 			$i = [intval($param["i"])];
-		}
-		$shop = new \app\common\logic\Shop($uid);
-		$shop->removeProduct($i);
-		return json(["status" => 200, "msg" => lang("CART_REMOVE_PRODUCT_SUCCESS")]);
+			}
+			$shop = new \app\common\logic\Shop($uid);
+			$removeResult = $shop->removeProduct($i);
+			if ($removeResult["status"] !== "success") {
+				return json(["status" => 409, "msg" => $removeResult["msg"]]);
+			}
+			return json(["status" => 200, "msg" => lang("CART_REMOVE_PRODUCT_SUCCESS")]);
 	}
 	/**
 	 * @title 购物车检查结算页面
@@ -3457,15 +3474,18 @@ class CartController extends CommonController
 	 * @version v1
 	 */
 	public function clearCart(\think\Request $request)
-	{
-		$uid = $request->uid;
-		$cart_data = \think\Db::name("cart_session")->where("uid", $uid)->value("cart_data");
-		$cart_data = json_decode($cart_data, true)["products"] ?? [];
-		\think\Db::name("cart_session")->where("uid", $uid)->update(["cart_data" => ""]);
-		if (!empty($cart_data)) {
-			$hook_data = [];
-			foreach ($cart_data as $v) {
-				$hook_data[] = ["pid" => $v["pid"], "billingcycle" => $v["billingcycle"], "num" => $v["num"]];
+		{
+			$uid = $request->uid;
+			$shop = new \app\common\logic\Shop($uid);
+			$clearResult = $shop->clearCart();
+			if ($clearResult["status"] !== "success") {
+				return json(["status" => 409, "msg" => $clearResult["msg"]]);
+			}
+			$cart_data = $clearResult["products"];
+			if (!empty($cart_data)) {
+				$hook_data = [];
+				foreach ($cart_data as $v) {
+					$hook_data[] = ["pid" => $v["pid"], "billingcycle" => $v["billingcycle"], "num" => $v["qty"] ?? 1];
 			}
 			hook("shopping_cart_clear", ["data" => $hook_data]);
 		}

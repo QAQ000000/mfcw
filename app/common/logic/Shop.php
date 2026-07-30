@@ -7,8 +7,11 @@ class Shop
 	const MAX_LEN = 20;
 	const MIN_LEN = 6;
 	const MAX_PRODUCT_QUANTITY = 100;
+	const MAX_CART_LINES = 50;
+	const MAX_CART_INSTANCES = 100;
 	public $uid;
 	private $cart_data;
+	private $loaded_cart_json;
 	public static function normalizeProductQuantity($qty)
 	{
 		if (is_int($qty)) {
@@ -28,6 +31,11 @@ class Shop
 		if (!is_array($cart_data) || !isset($cart_data["products"]) || !is_array($cart_data["products"])) {
 			return false;
 		}
+		if (count($cart_data["products"]) > self::MAX_CART_LINES) {
+			return false;
+		}
+		$total = 0;
+		$totalsByProduct = [];
 		foreach ($cart_data["products"] as &$product) {
 			if (!is_array($product)) {
 				return false;
@@ -37,29 +45,115 @@ class Shop
 				return false;
 			}
 			$product["qty"] = $qty;
+			$pid = intval($product["pid"] ?? 0);
+			if ($pid < 1) {
+				return false;
+			}
+			$total += $qty;
+			$totalsByProduct[$pid] = ($totalsByProduct[$pid] ?? 0) + $qty;
+			if ($total > self::MAX_CART_INSTANCES || $totalsByProduct[$pid] > self::MAX_PRODUCT_QUANTITY) {
+				return false;
+			}
 		}
 		unset($product);
 		return $cart_data;
+	}
+	public static function validateCartProductLimits($cart_data, $productRules = null)
+	{
+		$cart_data = self::normalizeCartProductQuantities($cart_data);
+		if ($cart_data === false) {
+			return ["status" => "error", "msg" => "购物车最多允许" . self::MAX_CART_LINES . "行、" . self::MAX_CART_INSTANCES . "个产品实例，同一产品最多" . self::MAX_PRODUCT_QUANTITY . "个"];
+		}
+		$totals = [];
+		foreach ($cart_data["products"] as $product) {
+			$pid = intval($product["pid"]);
+			$totals[$pid] = ($totals[$pid] ?? 0) + intval($product["qty"]);
+		}
+		if ($productRules === null) {
+			$rows = \think\Db::name("products")->field("id,allow_qty,api_type")->whereIn("id", array_keys($totals))->select()->toArray();
+			$productRules = [];
+			foreach ($rows as $row) {
+				$productRules[intval($row["id"])] = $row;
+			}
+		}
+		foreach ($totals as $pid => $qty) {
+			if (!isset($productRules[$pid])) {
+				return ["status" => "error", "msg" => "购物车中的产品不存在"];
+			}
+			if (($productRules[$pid]["api_type"] ?? "") === "resource") {
+				return ["status" => "error", "msg" => "该产品类型在当前版本中不受支持"];
+			}
+			if (intval($productRules[$pid]["allow_qty"] ?? 0) === 0 && $qty > 1) {
+				return ["status" => "error", "msg" => "该产品每次只能购买1个"];
+			}
+		}
+		return ["status" => "success", "data" => $cart_data, "totals" => $totals];
 	}
 	private static function sanitizeStoredCartQuantities($cart_data)
 	{
 		if (!is_array($cart_data) || empty($cart_data["products"]) || !is_array($cart_data["products"])) {
 			return $cart_data;
 		}
-		foreach ($cart_data["products"] as &$product) {
-			if (!is_array($product)) {
+		$products = [];
+		$total = 0;
+		$totalsByProduct = [];
+		foreach ($cart_data["products"] as $product) {
+			if (!is_array($product) || count($products) >= self::MAX_CART_LINES) {
+				continue;
+			}
+			$pid = intval($product["pid"] ?? 0);
+			if ($pid < 1) {
 				continue;
 			}
 			$qty = self::normalizeProductQuantity($product["qty"] ?? null);
-			$product["qty"] = $qty === false ? 1 : $qty;
+			$qty = $qty === false ? 1 : $qty;
+			$remaining = min(
+				self::MAX_CART_INSTANCES - $total,
+				self::MAX_PRODUCT_QUANTITY - ($totalsByProduct[$pid] ?? 0)
+			);
+			if ($remaining < 1) {
+				continue;
+			}
+			$product["qty"] = min($qty, $remaining);
+			$total += $product["qty"];
+			$totalsByProduct[$pid] = ($totalsByProduct[$pid] ?? 0) + $product["qty"];
+			$products[] = $product;
 		}
-		unset($product);
+		$cart_data["products"] = $products;
 		return $cart_data;
 	}
 	public function __construct($uid)
 	{
 		$this->uid = intval($uid);
 		$this->_init();
+	}
+	public static function acquireUserCartLock($uid, $timeout = 5)
+	{
+		$uid = intval($uid);
+		if ($uid < 1) {
+			return true;
+		}
+		return ShopDatabaseLock::acquire("zjmf_cart_uid_" . $uid, $timeout);
+	}
+	private function acquireMutationLock()
+	{
+		$lock = self::acquireUserCartLock($this->uid);
+		if ($lock === false) {
+			return false;
+		}
+		if ($this->uid > 0) {
+			$this->_init();
+		}
+		return $lock;
+	}
+	private function completeMutation($cartLock)
+	{
+		if ($this->uid > 0) {
+			cookie("shop_cookie", null);
+		}
+		if ($cartLock instanceof ShopDatabaseLock) {
+			$cartLock->release();
+		}
 	}
 	private function _init()
 	{
@@ -68,43 +162,26 @@ class Shop
 		$shop_cookie_array = [];
 		if (!empty($shop_cookie)) {
 			$shop_cookie_array = json_decode($shop_cookie, true);
+			if (!is_array($shop_cookie_array)) {
+				$shop_cookie_array = [];
+			}
 		}
 		if (!empty($uid)) {
 			$data = \think\Db::name("cart_session")->where("uid", $uid)->find();
 			if (!empty($data)) {
 				$cart_data = json_decode($data["cart_data"], true);
-				if (!empty($shop_cookie_array)) {
-					if (!empty($shop_cookie_array["promo"])) {
-						$cart_data["promo"] = $shop_cookie_array["promo"];
-					}
-					if (!empty($shop_cookie_array["products"])) {
-						if (!empty($cart_data["products"])) {
-							$have_ids_arr = array_unique(array_column($cart_data["products"], "pid"));
-							foreach ($shop_cookie_array["products"] as $key => $value) {
-								array_push($cart_data["products"], $value);
-							}
-						} else {
-							$cart_data["products"] = $shop_cookie_array["products"];
-						}
-					}
-				}
+				$cart_data = is_array($cart_data) ? $cart_data : ["uid" => $uid, "products" => [], "promo" => ""];
+				$this->loaded_cart_json = (string) $data["cart_data"];
 			} else {
-				$idata = [];
-				$idata["uid"] = $uid;
 				$cart_data = ["uid" => $uid, "products" => [], "promo" => ""];
-				$idata["status"] = 1;
-				$idata["create_time"] = time();
-				$idata["expire_time"] = strtotime("next year");
-				if (!empty($shop_cookie_array)) {
-					$cart_data["products"] = $shop_cookie_array["products"];
-					$cart_data["promo"] = $shop_cookie_array["promo"];
-				}
-				$idata["cart_data"] = json_encode($cart_data);
-				\think\Db::name("cart_session")->insert($idata);
 			}
-			cookie("shop_cookie", null);
+			if (!empty($shop_cookie_array["promo"])) {
+				$cart_data["promo"] = $shop_cookie_array["promo"];
+			}
+			if (!empty($shop_cookie_array["products"]) && is_array($shop_cookie_array["products"])) {
+				$cart_data["products"] = array_merge($cart_data["products"] ?? [], $shop_cookie_array["products"]);
+			}
 			$this->cart_data = self::sanitizeStoredCartQuantities($cart_data);
-			$this->save();
 		} else {
 			if (!empty($shop_cookie_array)) {
 				$this->cart_data = self::sanitizeStoredCartQuantities($shop_cookie_array);
@@ -120,10 +197,26 @@ class Shop
 		$uid = $this->uid;
 		if (!empty($uid)) {
 			$udata = ["cart_data" => $cart_data_json, "status" => $status, "expire_time" => strtotime("next year"), "update_time" => time()];
-			\think\Db::name("cart_session")->where("uid", $uid)->update($udata);
+			$exists = \think\Db::name("cart_session")->where("uid", $uid)->find();
+			if (!empty($exists)) {
+				\think\Db::name("cart_session")->where("id", intval($exists["id"]))->update($udata);
+			} else {
+				\think\Db::name("cart_session")->insert(array_merge($udata, ["uid" => $uid, "create_time" => time()]));
+			}
+			$this->loaded_cart_json = $cart_data_json;
 		} else {
 			cookie("shop_cookie", $cart_data_json, 2592000);
 		}
+	}
+	public function saveCheckoutRemainder($cartData)
+	{
+		if (is_string($cartData)) {
+			$cartData = $cartData === "" ? [] : json_decode($cartData, true);
+		}
+		$this->cart_data = is_array($cartData) && !empty($cartData)
+			? $cartData
+			: ["uid" => $this->uid, "products" => [], "promo" => ""];
+		$this->save();
 	}
 	private function checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $productqty, $os, $host, $password, $hostid)
 	{
@@ -136,9 +229,12 @@ class Shop
 			return ["status" => "error", "msg" => "产品ID不存在"];
 		}
 		$product_data = \think\Db::name("products")->field("p.*")->alias("p")->leftJoin("product_groups g", "p.gid=g.id")->where("p.id", $pid)->find();
-		if (empty($product_data)) {
-			return ["status" => "error", "msg" => "该产品不存在"];
-		}
+			if (empty($product_data)) {
+				return ["status" => "error", "msg" => "该产品不存在"];
+			}
+			if (($product_data["api_type"] ?? "") === "resource") {
+				return ["status" => "error", "msg" => "该产品类型在当前版本中不受支持"];
+			}
 		$product_model = new \app\common\model\ProductModel();
 		if (!$product_model->checkProductPrice($pid, $billingcycle, $currencyid)) {
 			return ["status" => "error", "msg" => lang("此周期未配置价格或价格错误，请重新选择周期")];
@@ -272,6 +368,10 @@ class Shop
 	}
 	public function addProduct($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid, $checkuot = 0)
 	{
+		$cartLock = $this->acquireMutationLock();
+		if ($cartLock === false) {
+			return ["status" => "error", "msg" => "购物车正在处理中，请稍后重试"];
+		}
 		$res = $this->checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid);
 		if ($res["status"] == "error") {
 			return $res;
@@ -279,8 +379,14 @@ class Shop
 		$addCartArr = $res["data"];
 		$cart_data = $this->cart_data;
 		$cart_data["products"][] = $addCartArr;
+		$limit = self::validateCartProductLimits($cart_data);
+		if ($limit["status"] !== "success") {
+			return $limit;
+		}
+		$cart_data = $limit["data"];
 		$this->cart_data = $cart_data;
 		$this->save();
+		$this->completeMutation($cartLock);
 		if ($checkuot == 1) {
 			$i = count($this->cart_data["products"]) - 1;
 		} else {
@@ -292,8 +398,12 @@ class Shop
 	}
 	public function removeProduct($i)
 	{
+		$cartLock = $this->acquireMutationLock();
+		if ($cartLock === false) {
+			return ["status" => "error", "msg" => "购物车正在处理中，请稍后重试"];
+		}
 		$cart_data = $this->cart_data;
-		$products_arr = $cart_data["products"];
+		$products_arr = $cart_data["products"] ?? [];
 		if (is_array($i)) {
 			foreach ($i as $i_v) {
 				if (array_key_exists($i_v, $products_arr)) {
@@ -319,10 +429,11 @@ class Shop
 		} else {
 			$this->cart_data = $cart_data;
 		}
+		$this->save();
+		$this->completeMutation($cartLock);
 		if (!empty($remove_data)) {
 			hook("shopping_cart_remove_product", $remove_data);
 		}
-		$this->save();
 		return ["status" => "success"];
 	}
 	public function getProductSession($i)
@@ -333,6 +444,10 @@ class Shop
 	}
 	public function editProduct($i, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid)
 	{
+		$cartLock = $this->acquireMutationLock();
+		if ($cartLock === false) {
+			return ["status" => "error", "msg" => "购物车正在处理中，请稍后重试"];
+		}
 		$i = intval($i);
 		$cart_data = $this->cart_data;
 		$pid = $cart_data["products"][$i]["pid"];
@@ -345,8 +460,14 @@ class Shop
 		}
 		$editCartArr = $res["data"];
 		$cart_data["products"][$i] = $editCartArr;
+		$limit = self::validateCartProductLimits($cart_data);
+		if ($limit["status"] !== "success") {
+			return $limit;
+		}
+		$cart_data = $limit["data"];
 		$this->cart_data = $cart_data;
 		$this->save();
+		$this->completeMutation($cartLock);
 		return ["status" => "success"];
 	}
 	public function getShoppingCart()
@@ -424,6 +545,10 @@ class Shop
 		if ($qty === false) {
 			return ["status" => "error", "msg" => "产品数量必须是1至" . self::MAX_PRODUCT_QUANTITY . "之间的整数"];
 		}
+		$cartLock = $this->acquireMutationLock();
+		if ($cartLock === false) {
+			return ["status" => "error", "msg" => "购物车正在处理中，请稍后重试"];
+		}
 		$i = intval($i);
 		$cart_data = $this->cart_data;
 		$pid = $cart_data["products"][$i]["pid"];
@@ -435,8 +560,14 @@ class Shop
 			return ["status" => "error", "msg" => "产品库存数量不足"];
 		}
 		$cart_data["products"][$i]["qty"] = $qty;
+		$limit = self::validateCartProductLimits($cart_data);
+		if ($limit["status"] !== "success") {
+			return $limit;
+		}
+		$cart_data = $limit["data"];
 		$this->cart_data = $cart_data;
 		$this->save();
+		$this->completeMutation($cartLock);
 		hook("shopping_cart_modify_num", ["pid" => $pid, "num" => $qty]);
 		return ["status" => "success", "msg" => "修改产品数量成功"];
 	}
@@ -444,6 +575,10 @@ class Shop
 	{
 		if (empty($promo)) {
 			return ["status" => "error", "msg" => "未传入优惠码"];
+		}
+		$cartLock = $this->acquireMutationLock();
+		if ($cartLock === false) {
+			return ["status" => "error", "msg" => "购物车正在处理中，请稍后重试"];
 		}
 		$cart_data = $this->cart_data;
 		$this->cart_data["promo"] = "";
@@ -453,13 +588,31 @@ class Shop
 		}
 		$this->cart_data["promo"] = $promo;
 		$this->save();
+		$this->completeMutation($cartLock);
 		return ["status" => "success", "msg" => "优惠码添加成功"];
 	}
 	public function removePromo()
 	{
+		$cartLock = $this->acquireMutationLock();
+		if ($cartLock === false) {
+			return ["status" => "error", "msg" => "购物车正在处理中，请稍后重试"];
+		}
 		$this->cart_data["promo"] = "";
 		$this->save();
+		$this->completeMutation($cartLock);
 		return ["status" => "success", "msg" => "优惠码移除成功"];
+	}
+	public function clearCart()
+	{
+		$cartLock = $this->acquireMutationLock();
+		if ($cartLock === false) {
+			return ["status" => "error", "msg" => "购物车正在处理中，请稍后重试"];
+		}
+		$removedProducts = $this->cart_data["products"] ?? [];
+		$this->cart_data = ["uid" => $this->uid, "products" => [], "promo" => ""];
+		$this->save();
+		$this->completeMutation($cartLock);
+		return ["status" => "success", "products" => $removedProducts];
 	}
 	private function getCurrency($currency)
 	{
@@ -522,13 +675,9 @@ class Shop
 				if ($product_data["api_type"] == "zjmf_api" && $product_data["upstream_version"] > 0 && $product_data["upstream_price_type"] == "percent") {
 					$is_zjmfapi = true;
 				}
-				if ($product_data["api_type"] == "resource") {
-					$user_grade = resourceUserGradePercent($uid, $pid);
-					$shop = \think\Db::name("res_products")->field("b.id,b.name,b.img")->alias("a")->leftJoin("res_shop b", "a.shop_id=b.id")->where("a.productid", $pid)->find();
-					$cart_products["shop_id"] = $shop["id"];
-					$cart_products["shop_name"] = $shop["name"];
-					$cart_products["shop_logo"] = "/upload/common/resource/" . $shop["img"];
-				}
+					if ($product_data["api_type"] == "resource") {
+						continue;
+					}
 				$cart_products["productid"] = $pid;
 				$cart_products["productsname"] = $product_data["name"];
 				$cart_products["api_type"] = $product_data["api_type"];
@@ -754,7 +903,6 @@ class Shop
 			$pagedata["total_desc"] = $currency_prefix . sprintf("%.2f", $subtotal) . $currency_suffix;
 			$cart_data["products"] = $new_session_products;
 			$this->cart_data = $cart_data;
-			$this->save();
 			return $pagedata;
 		} else {
 			$pagedata["cart_products"] = [];
@@ -810,13 +958,9 @@ class Shop
 				if ($product_data["api_type"] == "zjmf_api" && $product_data["upstream_version"] > 0 && $product_data["upstream_price_type"] == "percent") {
 					$is_zjmfapi = true;
 				}
-				if ($product_data["api_type"] == "resource") {
-					$user_grade = resourceUserGradePercent($uid, $pid);
-					$shop = \think\Db::name("res_products")->field("b.id,b.name,b.img")->alias("a")->leftJoin("res_shop b", "a.shop_id=b.id")->where("a.productid", $pid)->find();
-					$cart_products["shop_id"] = $shop["id"];
-					$cart_products["shop_name"] = $shop["name"];
-					$cart_products["shop_logo"] = "/upload/common/resource/" . $shop["img"];
-				}
+					if ($product_data["api_type"] == "resource") {
+						continue;
+					}
 				$cart_products["productid"] = $pid;
 				$cart_products["productsname"] = $product_data["name"];
 				$cart_products["api_type"] = $product_data["api_type"];
@@ -1048,7 +1192,6 @@ class Shop
 			$pagedata["total_price"] = $subtotal;
 			$cart_data["products"] = $new_session_products;
 			$this->cart_data = $cart_data;
-			$this->save();
 			return $pagedata;
 		} else {
 			$pagedata["cart_products"] = [];
@@ -1509,5 +1652,48 @@ class Shop
 			$addCartArr["configoptions"] = [];
 		}
 		return $addCartArr["configoptions"] ?: [];
+	}
+}
+
+class ShopDatabaseLock
+{
+	private $name;
+	private $released = false;
+
+	private function __construct($name)
+	{
+		$this->name = $name;
+	}
+
+	public static function acquire($name, $timeout)
+	{
+		$rows = \think\Db::query("SELECT GET_LOCK(?, ?) AS `acquired`", [$name, intval($timeout)]);
+		if (intval($rows[0]["acquired"] ?? 0) !== 1) {
+			return false;
+		}
+		return new self($name);
+	}
+
+	public function release()
+	{
+		if ($this->released) {
+			return true;
+		}
+		try {
+			$rows = \think\Db::query("SELECT RELEASE_LOCK(?) AS `released`", [$this->name]);
+			if (intval($rows[0]["released"] ?? 0) === 1) {
+				$this->released = true;
+				return true;
+			}
+			error_log("Failed to release cart lock: lock is not owned by the active database connection");
+		} catch (\Throwable $e) {
+			error_log("Failed to release cart lock: " . $e->getMessage());
+		}
+		return false;
+	}
+
+	public function __destruct()
+	{
+		$this->release();
 	}
 }

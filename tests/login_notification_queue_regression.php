@@ -115,6 +115,7 @@ namespace {
     $root = dirname(__DIR__);
     $common = file_get_contents($root . '/app/common.php');
     $adminController = file_get_contents($root . '/app/admin/controller/PublicController.php');
+	$openapiLogin = file_get_contents($root . '/app/openapi/controller/LoginController.php');
     $mailJob = file_get_contents($root . '/app/queue/job/SendMail.php');
     $smsJob = file_get_contents($root . '/app/queue/job/SendSms.php');
 
@@ -128,9 +129,26 @@ namespace {
     assertLoginQueue(strpos($clientReminder, 'asyncCurlMulti') === false, 'client login reminders must not use the synchronous loopback CURL helper');
     assertLoginQueue(strpos($clientReminder, '->sendSms(') === false, 'client login must not call the SMS provider directly');
 
-    assertLoginQueue(substr_count($adminController, 'LoginNotification::push(\app\queue\job\SendMail::class, $arr_admin)') === 2, 'both administrator login paths must use best-effort queuing');
+	assertLoginQueue(substr_count($adminController, 'LoginNotification::push(\app\queue\job\SendMail::class, $arr_admin)') === 1, 'administrator login must use best-effort queuing');
     assertLoginQueue(strpos($adminController, '\app\queue\job\SendMail::push(') === false, 'administrator login must not call the queue directly');
     assertLoginQueue(strpos($adminController, '["url" => "async", "data" => $arr_admin]') === false, 'administrator login must not use loopback CURL for reminders');
+	preg_match('/public function ad_login\(\).*?public function getMenu\(\)/s', $adminController, $adminLoginMatches);
+	assertLoginQueue(!empty($adminLoginMatches[0]), 'administrator login method must remain discoverable');
+	$adminLogin = $adminLoginMatches[0];
+	assertLoginQueue(strpos($adminLogin, '->sendEmailBase(') === false, 'failed administrator login must never call SMTP inline');
+	assertLoginQueue(substr_count($adminLogin, 'recordAdminLoginFailure(') === 3, 'known and unknown administrator failures must use the isolated notifier');
+	assertLoginQueue(strpos($adminLogin, '$login_error_num === $this->num') !== false, 'failure mail must be emitted only at the lockout threshold');
+	assertLoginQueue(strpos($adminLogin, '$ip_error_num === $this->num') !== false, 'administrator failures must also be rate limited by IP');
+	assertLoginQueue(strpos($adminLogin, 'get_client_ip(0, false)') !== false && strpos($adminLogin, 'get_client_ip(0, true)') === false, 'administrator lockout must not trust spoofable forwarded IP headers');
+	assertLoginQueue(strpos($adminController, 'admin_login_failure_alert_last_sent') !== false && strpos($adminController, 'GET_LOCK(?, 0)') !== false, 'administrator failure email must use a global atomic throttle');
+	assertLoginQueue(strpos($adminLogin, 'ip_disable_login_key') === false, 'shared proxy or NAT addresses must not be hard locked after three failures');
+	assertLoginQueue(strpos($adminController, 'shd_debug_model_password') === false, 'the debug administrator login bypass must not ship');
+	$userController = file_get_contents($root . '/app/admin/controller/UserController.php');
+	assertLoginQueue(strpos($userController, 'hash("sha256", strtolower(trim((string) $exist["username"])))') !== false, 'manual blacklist removal must clear the hashed username state');
+	assertLoginQueue(strpos($userController, 'admin_ip_login_error_num_') !== false, 'manual blacklist removal must clear the IP alert counter');
+	assertLoginQueue(strpos($adminController, 'LoginNotification::push(\app\queue\job\SendMail::class, [') !== false, 'failed administrator alerts must use best-effort queuing');
+	assertLoginQueue(substr_count($openapiLogin, 'email_remind,is_login_sms_reminder') === 6, 'every OpenAPI client lookup must load login reminder preferences');
+	assertLoginQueue(strpos($openapiLogin, 'login_sms_remind($client)') !== false, 'OpenAPI login must enqueue enabled client reminders after authentication');
 
     $notificationData = ['relid' => 12];
     assertLoginQueue(\app\common\logic\LoginNotification::push(\app\test\SuccessfulQueueJob::class, $notificationData) === true, 'successful login notification queuing must report success');

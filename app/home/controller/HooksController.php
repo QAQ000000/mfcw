@@ -1458,6 +1458,16 @@ class HooksController
 	{
 	}
 	/**
+	 * @title 创建工单前验证
+	 * @url before_create_ticket
+	 * @method POST
+	 * @param .name:params type:array require:1 default: other: desc:创建工单参数
+	 * @return ['status'=>200/400,'msg'=>'消息'] 400时阻止创建工单
+	 */
+	public function before_create_ticket()
+	{
+	}
+	/**
 	 * @title 签订合同之后
 	 * @author wyh
 	 * @url after_sign_contract

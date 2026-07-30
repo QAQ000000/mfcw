@@ -4195,7 +4195,7 @@ ALTER TABLE  shd_affiliates_products_setting  ADD INDEX `pid` (`pid`);
 ALTER TABLE  shd_affiliates_user  ADD INDEX `uid` (`uid`);
 ALTER TABLE  shd_affiliates_user  ADD INDEX `affid` (`affid`);
 ALTER TABLE  shd_cancel_requests  ADD INDEX `relid` (`relid`);
-ALTER TABLE  shd_cart_session  ADD INDEX `uid` (`uid`(100));
+ALTER TABLE  shd_cart_session  ADD UNIQUE INDEX `uq_cart_session_uid` (`uid`(100));
 ALTER TABLE  shd_cart_session  ADD INDEX `sessionid` (`sessionid`(100));
 ALTER TABLE  shd_contacts  ADD INDEX `uid` (`uid`);
 ALTER TABLE  shd_contacts  ADD INDEX `email` (`email`(100));
@@ -5916,6 +5916,6 @@ ALTER TABLE `shd_certifi_log` MODIFY `pic` TEXT COMMENT '图片集合用逗号�
 ALTER TABLE `shd_products` ADD COLUMN `upstream_ontrial_status` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '上游试用状态:1开启,0未开启';
 ALTER TABLE `shd_clients` ADD COLUMN `send_close` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否关闭发送邮件短信:0否默认，1是';
 INSERT INTO `shd_configuration` (`setting`,`value`) VALUES ('allow_new_login_template','default');
-UPDATE `shd_configuration` SET `value` = '3.5.8' WHERE `setting` = 'update_last_version';
-UPDATE `shd_configuration` SET `value` = '3.5.8' WHERE `setting` = 'beta_version';
+UPDATE `shd_configuration` SET `value` = '3.7.7' WHERE `setting` = 'update_last_version';
+UPDATE `shd_configuration` SET `value` = '3.7.7' WHERE `setting` = 'beta_version';
 ALTER TABLE `shd_upper_reaches_res` ADD COLUMN `mark` VARCHAR(5000) NOT NULL DEFAULT '' COMMENT '备注';

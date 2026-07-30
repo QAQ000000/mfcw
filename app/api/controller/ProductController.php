@@ -353,17 +353,9 @@ class ProductController
                     $rebate_total = bcmul($rebate_total,$v['upstream_price_value'] / 100,2);
                 }
 
-                if ($v['api_type'] == 'resource'){
-                    $grade = resourceUserGradePercent($uid,$v['id']);
-                    $v['product_price'] = bcmul($v['product_price'],$grade / 100,2);
-
-                    if ($v['ontrial'] == 1){
-                        $v['ontrial_price'] = bcmul($v['ontrial_price'],$grade / 100,2);
-                        $v['ontrial_setup_fee'] = bcmul($v['ontrial_setup_fee'],$grade / 100,2);
-                    }
-
-                    $rebate_total = bcmul($rebate_total,$grade / 100,2);
-                }
+				if ($v['api_type'] == 'resource'){
+					continue;
+				}
 
                 $flag = getSaleProductUser($v['id'],$uid);
                 $v['sale_price'] = $v['bates'] = 0;
@@ -589,17 +581,9 @@ class ProductController
                 $rebate_total = bcmul($rebate_total,$v['upstream_price_value'] / 100,2);
             }
 
-            if ($v['api_type'] == 'resource'){
-                $grade = resourceUserGradePercent($uid,$v['id']);
-                $v['product_price'] = bcmul($v['product_price'],$grade / 100,2);
-
-                if ($v['ontrial'] == 1){
-                    $v['ontrial_price'] = bcmul($v['ontrial_price'],$grade / 100,2);
-                    $v['ontrial_setup_fee'] = bcmul($v['ontrial_setup_fee'],$grade / 100,2);
-                }
-
-                $rebate_total = bcmul($rebate_total,$grade / 100,2);
-            }
+			if ($v['api_type'] == 'resource'){
+				return json(['status' => 404, 'msg' => '产品不存在']);
+			}
 
             $flag = getSaleProductUser($v['id'],$uid);
             $v['sale_price'] = $v['bates'] = 0;
@@ -646,6 +630,239 @@ class ProductController
             'data' => [
                 'product' => $v
             ]
+        ]);
+    }
+
+    public function getUpgradeProduct()
+    {
+        $param = request()->param();
+		$id = (int) ($param['id'] ?? 0);
+		$pids = Db::name('product_upgrade_products')
+			->where('product_id', $id)
+			->column('upgrade_product_id') ?: [];
+		$filterproducts = Db::name('products')
+			->alias('p')
+			->leftJoin('product_groups g', 'g.id=p.gid')
+			->field('p.id,p.type,p.gid,p.name,p.description,p.pay_method,p.tax,p.order,p.pay_type,p.api_type,p.upstream_version,p.upstream_price_type,p.upstream_price_value,p.stock_control,p.qty')
+			->whereIn('p.id', $pids)
+			->whereIn('p.type', ['dcim', 'dcimcloud'])
+			->where('p.hidden', 0)
+			->where('g.hidden', 0)
+			->where('p.api_type', '<>', 'resource')
+			->select()
+            ->toArray();
+        $currencyid = 1;
+        $uid = !empty(request()->uid) ? request()->uid : '';
+        $newfilterproducts = [];
+        foreach ($filterproducts as $key => $v) {
+            if (!empty($v)) {
+                $paytype = (array) json_decode($v['pay_type']);
+                $configuredPayType = $paytype['pay_type'] ?? '';
+                $pricing = Db::name('pricing')
+                    ->where('type', 'product')
+                    ->where('relid', $v['id'])
+                    ->where('currency', $currencyid)
+                    ->find();
+                if (!empty($paytype['pay_ontrial_status'])) {
+                    if (!empty($pricing) && $pricing['ontrial'] >= 0) {
+                        $v['product_price'] = $pricing['ontrial'];
+                        $v['setup_fee'] = $pricing['ontrialfee'];
+                        $v['billingcycle'] = 'ontrial';
+                        $v['billingcycle_zh'] = lang('ONTRIAL');
+                    } else {
+                        $v['product_price'] = 0;
+                        $v['setup_fee'] = 0;
+                        $v['billingcycle'] = '';
+                        $v['billingcycle_zh'] = lang('PRICE_NO_CONFIG');
+                    }
+                    $v['ontrial'] = 1;
+                    $v['ontrial_cycle'] = $paytype['pay_ontrial_cycle'] ?? 0;
+                    $v['ontrial_cycle_type'] = !empty($paytype['pay_ontrial_cycle_type'])
+                        ? $paytype['pay_ontrial_cycle_type']
+                        : 'day';
+                    $v['ontrial_price'] = $pricing['ontrial'] ?? 0;
+                    $v['ontrial_setup_fee'] = $pricing['ontrialfee'] ?? 0;
+                } else {
+                    $v['ontrial'] = 0;
+                }
+                if ($configuredPayType == 'free') {
+                    $v['product_price'] = 0;
+                    $v['setup_fee'] = 0;
+                    $v['billingcycle'] = 'free';
+                    $v['billingcycle_zh'] = lang('FREE');
+                } elseif ($configuredPayType == 'onetime') {
+                    if (!empty($pricing) && $pricing['onetime'] >= 0) {
+                        $v['product_price'] = $pricing['onetime'];
+                        $v['setup_fee'] = $pricing['osetupfee'];
+                        $v['billingcycle'] = 'onetime';
+                        $v['billingcycle_zh'] = lang('ONETIME');
+                    } else {
+                        $v['product_price'] = 0;
+                        $v['setup_fee'] = 0;
+                        $v['billingcycle'] = '';
+                        $v['billingcycle_zh'] = lang('PRICE_NO_CONFIG');
+                    }
+                } else {
+                    if (!empty($pricing) && $configuredPayType == 'recurring') {
+                        if ($pricing['hour'] >= 0) {
+                            $v['product_price'] = $pricing['hour'];
+                            $v['setup_fee'] = $pricing['hsetupfee'];
+                            $v['billingcycle'] = 'hour';
+                            $v['billingcycle_zh'] = lang('HOUR');
+                        } elseif ($pricing['day'] >= 0) {
+                            $v['product_price'] = $pricing['day'];
+                            $v['setup_fee'] = $pricing['dsetupfee'];
+                            $v['billingcycle'] = 'day';
+                            $v['billingcycle_zh'] = lang('DAY');
+                        } elseif ($pricing['monthly'] >= 0) {
+                            $v['product_price'] = $pricing['monthly'];
+                            $v['setup_fee'] = $pricing['msetupfee'];
+                            $v['billingcycle'] = 'monthly';
+                            $v['billingcycle_zh'] = lang('MONTHLY');
+                        } elseif ($pricing['quarterly'] >= 0) {
+                            $v['product_price'] = $pricing['quarterly'];
+                            $v['setup_fee'] = $pricing['qsetupfee'];
+                            $v['billingcycle'] = 'quarterly';
+                            $v['billingcycle_zh'] = lang('QUARTERLY');
+                        } elseif ($pricing['semiannually'] >= 0) {
+                            $v['product_price'] = $pricing['semiannually'];
+                            $v['setup_fee'] = $pricing['ssetupfee'];
+                            $v['billingcycle'] = 'semiannually';
+                            $v['billingcycle_zh'] = lang('SEMIANNUALLY');
+                        } elseif ($pricing['annually'] >= 0) {
+                            $v['product_price'] = $pricing['annually'];
+                            $v['setup_fee'] = $pricing['asetupfee'];
+                            $v['billingcycle'] = 'annually';
+                            $v['billingcycle_zh'] = lang('ANNUALLY');
+                        } elseif ($pricing['biennially'] >= 0) {
+                            $v['product_price'] = $pricing['biennially'];
+                            $v['setup_fee'] = $pricing['bsetupfee'];
+                            $v['billingcycle'] = 'biennially';
+                            $v['billingcycle_zh'] = lang('BIENNIALLY');
+                        } elseif ($pricing['triennially'] >= 0) {
+                            $v['product_price'] = $pricing['triennially'];
+                            $v['setup_fee'] = $pricing['tsetupfee'];
+                            $v['billingcycle'] = 'triennially';
+                            $v['billingcycle_zh'] = lang('TRIENNIALLY');
+                        } elseif ($pricing['fourly'] >= 0) {
+                            $v['product_price'] = $pricing['fourly'];
+                            $v['setup_fee'] = $pricing['foursetupfee'];
+                            $v['billingcycle'] = 'fourly';
+                            $v['billingcycle_zh'] = lang('FOURLY');
+                        } elseif ($pricing['fively'] >= 0) {
+                            $v['product_price'] = $pricing['fively'];
+                            $v['setup_fee'] = $pricing['fivesetupfee'];
+                            $v['billingcycle'] = 'fively';
+                            $v['billingcycle_zh'] = lang('FIVELY');
+                        } elseif ($pricing['sixly'] >= 0) {
+                            $v['product_price'] = $pricing['sixly'];
+                            $v['setup_fee'] = $pricing['sixsetupfee'];
+                            $v['billingcycle'] = 'sixly';
+                            $v['billingcycle_zh'] = lang('SIXLY');
+                        } elseif ($pricing['sevenly'] >= 0) {
+                            $v['product_price'] = $pricing['sevenly'];
+                            $v['setup_fee'] = $pricing['sevensetupfee'];
+                            $v['billingcycle'] = 'sevenly';
+                            $v['billingcycle_zh'] = lang('SEVENLY');
+                        } elseif ($pricing['eightly'] >= 0) {
+                            $v['product_price'] = $pricing['eightly'];
+                            $v['setup_fee'] = $pricing['eightsetupfee'];
+                            $v['billingcycle'] = 'eightly';
+                            $v['billingcycle_zh'] = lang('EIGHTLY');
+                        } elseif ($pricing['ninely'] >= 0) {
+                            $v['product_price'] = $pricing['ninely'];
+                            $v['setup_fee'] = $pricing['ninesetupfee'];
+                            $v['billingcycle'] = 'ninely';
+                            $v['billingcycle_zh'] = lang('NINELY');
+                        } elseif ($pricing['tenly'] >= 0) {
+                            $v['product_price'] = $pricing['tenly'];
+                            $v['setup_fee'] = $pricing['tensetupfee'];
+                            $v['billingcycle'] = 'tenly';
+                            $v['billingcycle_zh'] = lang('TENLY');
+                        } else {
+                            $v['product_price'] = 0;
+                            $v['setup_fee'] = 0;
+                            $v['billingcycle'] = '';
+                            $v['billingcycle_zh'] = lang('PRICE_CONFIG_ERROR');
+                        }
+                    } else {
+                        $v['product_price'] = 0;
+                        $v['setup_fee'] = 0;
+                        $v['billingcycle'] = '';
+                        $v['billingcycle_zh'] = lang('PRICE_NO_CONFIG');
+                    }
+                }
+                if ($configuredPayType == 'recurring'
+                    && !empty($pricing)
+                    && in_array($v['type'], array_keys(config('developer_app_product_type')))
+                    && $pricing['annually'] > 0
+                ) {
+                    $v['product_price'] = $pricing['annually'];
+                    $v['setup_fee'] = $pricing['asetupfee'];
+                    $v['billingcycle'] = 'annually';
+                    $v['billingcycle_zh'] = lang('ANNUALLY');
+                }
+                $v['product_price'] = bcadd($v['setup_fee'], $v['product_price'], 2);
+                $cart_logic = new Cart();
+                $rebate_total = 0;
+                $config_total = $cart_logic->getProductDefaultConfigPrice(
+                    $v['id'],
+                    $currencyid,
+                    $v['billingcycle'],
+                    $rebate_total
+                );
+                $rebate_total = bcadd($v['product_price'], $rebate_total, 2);
+                $v['product_price'] = bcadd($v['product_price'], $config_total, 2);
+                if ($v['api_type'] == 'zjmf_api'
+                    && $v['upstream_version'] > 0
+                    && $v['upstream_price_type'] == 'percent'
+                ) {
+                    $v['product_price'] = bcmul($v['product_price'], $v['upstream_price_value'] / 100, 2);
+                    if ($v['ontrial'] == 1) {
+                        $v['ontrial_price'] = bcmul($v['ontrial_price'], $v['upstream_price_value'] / 100, 2);
+                        $v['ontrial_setup_fee'] = bcmul($v['ontrial_setup_fee'], $v['upstream_price_value'] / 100, 2);
+                    }
+                    $rebate_total = bcmul($rebate_total, $v['upstream_price_value'] / 100, 2);
+                }
+                $flag = getSaleProductUser($v['id'], $uid);
+                $v['sale_price'] = $v['bates'] = 0;
+                $v['has_bates'] = 0;
+                if ($flag) {
+                    if ($flag['type'] == 1) {
+                        $bates = bcdiv($flag['bates'], 100, 2);
+                        $rebate = bcmul($rebate_total, 1 - $bates, 2) < 0
+                            ? 0
+                            : bcmul($rebate_total, 1 - $bates, 2);
+                        $v['sale_price'] = bcsub($v['product_price'], $rebate, 2) < 0
+                            ? 0
+                            : bcsub($v['product_price'], $rebate, 2);
+                        $v['bates'] = bcmul($v['product_price'], 1 - $bates, 2);
+                    } elseif ($flag['type'] == 2) {
+                        $bates = $flag['bates'];
+                        $rebate = $rebate_total < $bates ? $rebate_total : $bates;
+                        $v['sale_price'] = bcsub($v['product_price'], $rebate, 2) < 0
+                            ? 0
+                            : bcsub($v['product_price'], $rebate, 2);
+                        $v['bates'] = $bates;
+                    }
+                    $v['has_bates'] = 1;
+                }
+            }
+            $payType = json_decode($v['pay_type'], true)['pay_type'] ?? '';
+			$v['pay_type'] = $payType == 'recurring' ? 'recurring_prepayment' : $payType;
+			$v['price'] = $v['product_price'];
+			$v['cycle'] = $v['billingcycle_zh'];
+			unset($v['api_type'], $v['upstream_version'], $v['upstream_price_type'], $v['upstream_price_value']);
+            $newfilterproducts[$key] = $v;
+            if ($v['billingcycle'] == '') {
+                unset($newfilterproducts[$key]);
+            }
+        }
+        $newfilterproducts = array_values($newfilterproducts);
+        return json([
+            'status' => 200,
+            'msg' => '请求成功',
+            'data' => ['list' => $newfilterproducts],
         ]);
     }
 
