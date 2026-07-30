@@ -7230,10 +7230,21 @@ function getLastVersion()
 	$arr[] = $arr_last_pop;
 	return $arr_last[1];
 }
-function upgradeHandle()
+function upgradeHandle($currentVersion = "", $targetVersion = "")
 {
 	if (file_exists(CMF_ROOT . "/public/upgrade/upgrade.php")) {
-		return json(["status" => 1001, "msg" => "请先执行升级文件", "data" => ["url" => "/upgrade/install.php"]]);
+		$versionMessage = "";
+		if ($currentVersion !== "" && $targetVersion !== "") {
+			$versionMessage = "（当前 {$currentVersion}，目标 {$targetVersion}）";
+		}
+		return json([
+			"status" => 1001,
+			"msg" => "数据库升级未完成{$versionMessage}，请在站点根目录执行 CLI 升级命令",
+			"data" => [
+				"url" => "/upgrade/install.php",
+				"command" => "php public/upgrade/upgrade.php --run",
+			],
+		]);
 	}
 	return json(["status" => 1002, "msg" => "升级文件不存在，请重新下载安装包！"]);
 }

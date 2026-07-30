@@ -178,8 +178,16 @@ class ProductController
 
     public function proList()
     {
-        $filterproducts = Db::name('products')->field('id,type,gid,name,description,pay_method,tax,order,pay_type,api_type,upstream_version,upstream_price_type,upstream_price_value,stock_control,qty')
-            ->whereIn('type',['dcim','dcimcloud'])
+        $filterproducts = Db::name('products')
+            ->alias('p')
+            ->leftJoin('product_groups g', 'g.id=p.gid')
+            ->leftJoin('product_first_groups fg', 'fg.id=g.gid')
+            ->field('p.id,p.type,p.gid,p.name,p.description,p.pay_method,p.tax,p.order,p.pay_type,p.api_type,p.upstream_version,p.upstream_price_type,p.upstream_price_value,p.stock_control,p.qty')
+            ->whereIn('p.type',['dcim','dcimcloud'])
+            ->where('p.hidden', 0)
+            ->where('g.hidden', 0)
+            ->where('fg.hidden', 0)
+            ->where('p.api_type', '<>', 'resource')
             ->select()->toArray();
         $currencyid = 1;
         $uid = !empty(request()->uid)?request()->uid:'';
@@ -384,6 +392,7 @@ class ProductController
             }
             $v['price'] = $v['product_price'];
             $v['cycle'] = $v['billingcycle_zh'];
+            unset($v['api_type'], $v['upstream_version'], $v['upstream_price_type'], $v['upstream_price_value']);
             $newfilterproducts[$key] = $v;
             if( $v['billingcycle']==''){
                 unset($newfilterproducts[$key]);
@@ -404,11 +413,23 @@ class ProductController
     {
         $param = request()->param();
 
-        $id = $param['id']??0;
+        $id = intval($param['id'] ?? 0);
 
-        $v = Db::name('products')->field('id,type,gid,name,description,pay_method,tax,order,pay_type,api_type,upstream_version,upstream_price_type,upstream_price_value,stock_control,qty')
-            ->where('id',$id)
+        $v = Db::name('products')
+            ->alias('p')
+            ->leftJoin('product_groups g', 'g.id=p.gid')
+            ->leftJoin('product_first_groups fg', 'fg.id=g.gid')
+            ->field('p.id,p.type,p.gid,p.name,p.description,p.pay_method,p.tax,p.order,p.pay_type,p.api_type,p.upstream_version,p.upstream_price_type,p.upstream_price_value,p.stock_control,p.qty')
+            ->where('p.id', $id)
+            ->whereIn('p.type', ['dcim', 'dcimcloud'])
+            ->where('p.hidden', 0)
+            ->where('g.hidden', 0)
+            ->where('fg.hidden', 0)
+            ->where('p.api_type', '<>', 'resource')
             ->find();
+        if (empty($v)) {
+            return json(['status' => 404, 'msg' => '产品不存在']);
+        }
 
         $currencyid = 1;
         $uid = !empty(request()->uid)?request()->uid:'';
@@ -623,6 +644,7 @@ class ProductController
             $tmp = $logic->getDetailCache($id);
         }
         $v["customfields"] = $tmp[$id]["customfields"] ?? [];
+        unset($v['api_type'], $v['upstream_version'], $v['upstream_price_type'], $v['upstream_price_value']);
 
         return json([
             'status' => 200,
@@ -643,11 +665,13 @@ class ProductController
 		$filterproducts = Db::name('products')
 			->alias('p')
 			->leftJoin('product_groups g', 'g.id=p.gid')
+			->leftJoin('product_first_groups fg', 'fg.id=g.gid')
 			->field('p.id,p.type,p.gid,p.name,p.description,p.pay_method,p.tax,p.order,p.pay_type,p.api_type,p.upstream_version,p.upstream_price_type,p.upstream_price_value,p.stock_control,p.qty')
 			->whereIn('p.id', $pids)
 			->whereIn('p.type', ['dcim', 'dcimcloud'])
 			->where('p.hidden', 0)
 			->where('g.hidden', 0)
+			->where('fg.hidden', 0)
 			->where('p.api_type', '<>', 'resource')
 			->select()
             ->toArray();

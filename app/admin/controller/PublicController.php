@@ -719,7 +719,7 @@ class PublicController extends \cmf\controller\BaseController
 		$current_version = configuration("update_last_version");
 		if ($version) {
 			if (!version_compare($current_version, $version, ">=")) {
-				return upgradeHandle();
+				return upgradeHandle($current_version, $version);
 			}
 			upgradeDel($current_version, $version);
 		}

@@ -22,6 +22,8 @@ $standaloneUpgrader = file_get_contents($root . '/public/upgrade/upgrade.php');
 $upgradeRoutes = file_get_contents($root . '/data/route/api.php');
 $standaloneInstaller = file_get_contents($root . '/public/upgrade/install.php');
 $readme = file_get_contents($root . '/README.md');
+$common = file_get_contents($root . '/app/common.php');
+$adminPublic = file_get_contents($root . '/app/admin/controller/PublicController.php');
 
 assertUpgrade377($version === '3.7.7', 'release version must be 3.7.7');
 assertUpgrade377(!empty($upgradeLog), 'upgrade log must not be empty');
@@ -82,7 +84,11 @@ assertUpgrade377(substr_count($apiUpgrader, 'return $this->autoUpgradeDisabled()
 assertUpgrade377(strpos($apiUpgrader, 'hash_equals($sessionToken, $submittedToken)') === false, 'the disabled web upgrader must not maintain a parallel token contract');
 assertUpgrade377(strpos($standaloneUpgrader, "PHP_SAPI !== 'cli'") !== false && strpos($standaloneUpgrader, "in_array('--run', \$argv, true)") !== false, 'standalone upgrader must be CLI-only and explicitly armed');
 assertUpgrade377(strpos($standaloneUpgrader, 'die(') === false && substr_count($standaloneUpgrader, 'exit(1);') >= 9, 'every standalone upgrade failure must return a nonzero exit code');
-assertUpgrade377(strpos($standaloneInstaller, 'http_response_code(404)') !== false && strpos($standaloneInstaller, 'exit;') !== false, 'legacy anonymous upgrade page must be disabled');
+assertUpgrade377(strpos($standaloneInstaller, 'http_response_code(503)') !== false, 'upgrade instruction page must report service unavailable');
+assertUpgrade377(strpos($standaloneInstaller, 'php public/upgrade/upgrade.php --run') !== false, 'upgrade instruction page must show the supported CLI command');
+assertUpgrade377(strpos($standaloneInstaller, 'PDO') === false && strpos($standaloneInstaller, 'app/config/database.php') === false, 'upgrade instruction page must never connect to the database');
+assertUpgrade377(strpos($common, '"command" => "php public/upgrade/upgrade.php --run"') !== false, 'login upgrade state must include the supported CLI command');
+assertUpgrade377(strpos($adminPublic, 'upgradeHandle($current_version, $version)') !== false, 'login upgrade state must report current and target versions');
 assertUpgrade377(strpos($readme, 'php public/upgrade/upgrade.php --run') !== false, 'manual upgrade instructions must name the only supported database upgrade command');
 
 echo "PASS: 3.7.6 and maintained releases select the idempotent 3.7.7 bridge\n";

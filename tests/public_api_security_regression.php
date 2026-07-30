@@ -15,6 +15,12 @@ $products = file_get_contents($root . '/app/api/controller/ProductController.php
 $flowPackets = file_get_contents($root . '/app/api/controller/FlowPacketController.php');
 $ticket = file_get_contents($root . '/app/home/controller/TicketController.php');
 $adminCheck = file_get_contents($root . '/app/http/middleware/AdminCheck.php');
+$productListStart = strpos($products, 'public function proList()');
+$productDetailStart = strpos($products, 'public function detail()');
+$upgradeProductStart = strpos($products, 'public function getUpgradeProduct()');
+$productList = substr($products, $productListStart, $productDetailStart - $productListStart);
+$productDetail = substr($products, $productDetailStart, $upgradeProductStart - $productDetailStart);
+$upgradeProducts = substr($products, $upgradeProductStart);
 
 assertPublicApiSecurity(
 	strpos($routes, 'Route::get("api/product/upgrade_product", "api/product/getUpgradeProduct")->middleware("Check")') !== false,
@@ -38,12 +44,31 @@ assertPublicApiSecurity(
 	'supplier custom buttons may expose only the required redirect URL'
 );
 assertPublicApiSecurity(
-	strpos($products, "unset(\$v['api_type'], \$v['upstream_version'], \$v['upstream_price_type'], \$v['upstream_price_value'])") !== false,
-	'upgrade products must remove internal supplier and markup fields'
+	strpos($productList, "->where('p.hidden', 0)") !== false
+		&& strpos($productList, "->where('g.hidden', 0)") !== false
+		&& strpos($productList, "->where('fg.hidden', 0)") !== false
+		&& strpos($productList, "->where('p.api_type', '<>', 'resource')") !== false,
+	'public product list must expose only visible non-P3 products in visible groups'
 );
 assertPublicApiSecurity(
-	strpos($products, "->where('p.api_type', '<>', 'resource')") !== false
-		&& strpos(substr($products, strpos($products, 'public function getUpgradeProduct')), 'resourceUserGradePercent') === false,
+	strpos($productDetail, "->where('p.hidden', 0)") !== false
+		&& strpos($productDetail, "->where('g.hidden', 0)") !== false
+		&& strpos($productDetail, "->where('fg.hidden', 0)") !== false
+		&& strpos($productDetail, "->where('p.api_type', '<>', 'resource')") !== false
+		&& strpos($productDetail, "return json(['status' => 404, 'msg' => '产品不存在'])") !== false,
+	'product detail must reject hidden, orphaned and P3 products'
+);
+$internalProductUnset = "unset(\$v['api_type'], \$v['upstream_version'], \$v['upstream_price_type'], \$v['upstream_price_value'])";
+assertPublicApiSecurity(
+	strpos($productList, $internalProductUnset) !== false
+		&& strpos($productDetail, $internalProductUnset) !== false
+		&& strpos($upgradeProducts, $internalProductUnset) !== false,
+	'every customer product response must remove internal supplier and markup fields'
+);
+assertPublicApiSecurity(
+	strpos($upgradeProducts, "->where('p.api_type', '<>', 'resource')") !== false
+		&& strpos($upgradeProducts, "->where('fg.hidden', 0)") !== false
+		&& strpos($upgradeProducts, 'resourceUserGradePercent') === false,
 	'upgrade products must exclude P3 resource products and calls'
 );
 assertPublicApiSecurity(
