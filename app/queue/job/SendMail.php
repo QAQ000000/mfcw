@@ -8,10 +8,15 @@ class SendMail extends \app\queue\common\JobCommon
 	public function fire(\think\queue\Job $job, $data)
 	{
 		try {
-			$job->delete();
 			$this->handle($data);
+			$job->delete();
 		} catch (\Throwable $e) {
-			self::later(10, $data);
+			\think\facade\Log::record(static::class . " queue failed: " . $e->getMessage(), "error");
+			if ($job->attempts() >= 3) {
+				$job->delete();
+			} else {
+				$job->release(10);
+			}
 		}
 	}
 	/**
@@ -22,8 +27,8 @@ class SendMail extends \app\queue\common\JobCommon
 	{
 		parent::handle($data);
 		$email = new \app\common\logic\Email();
-		list($relid, $name, $type, $admin, $cc, $bcc, $msg, $attachments) = [$data["relid"] ?? "", $data["name"] ?? "", $data["type"] ?? "", $data["admin"] ?? "", $data["cc"] ?? "", $data["bcc"] ?? "", $data["message"] ?? "", $data["attachments"] ?? ""];
-		return $email->sendEmailBaseFinal($relid, $name, $type, true, $admin, $cc, $bcc, $msg, $attachments);
+		list($relid, $name, $type, $admin, $cc, $bcc, $msg, $attachments, $adminid, $ip) = [$data["relid"] ?? "", $data["name"] ?? "", $data["type"] ?? "", $data["admin"] ?? "", $data["cc"] ?? "", $data["bcc"] ?? "", $data["message"] ?? "", $data["attachments"] ?? "", $data["adminid"] ?? "", $data["ip"] ?? ""];
+		return $email->sendEmailBaseFinal($relid, $name, $type, true, $admin, $cc, $bcc, $msg, $attachments, $adminid, $ip);
 	}
 	public function delaty(&$data)
 	{

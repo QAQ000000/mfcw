@@ -2473,8 +2473,7 @@ function login_sms_remind($data)
 	}
 	$arr_client = ["relid" => $data["id"], "name" => "登录提醒", "type" => "general", "sync" => true, "admin" => false, "ip" => $ip];
 	if (!empty($data["email_remind"])) {
-		$curl_multi_data[0] = ["url" => "async", "data" => $arr_client];
-		asyncCurlMulti($curl_multi_data);
+		\app\common\logic\LoginNotification::push(\app\queue\job\SendMail::class, $arr_client);
 	}
 	if ($data["phone_code"] > 0 && isset($data["phonenumber"][0]) && $data["is_login_sms_reminder"] == 1) {
 		if ($data["phone_code"] == "+86" || $data["phone_code"] == "86") {
@@ -2490,8 +2489,7 @@ function login_sms_remind($data)
 		$sms = new \app\common\logic\Sms();
 		$client = check_type_is_use($message_template_type[strtolower("login_sms_remind")], $data["id"], $sms);
 		if ($client) {
-			$tmp = $sms->sendSms($message_template_type[strtolower("login_sms_remind")], $phone, $params, false, $data["id"]);
-			\think\facade\Log::record($tmp, "login_phone_remind");
+			\app\common\logic\LoginNotification::push(\app\queue\job\SendSms::class, ["type" => $message_template_type[strtolower("login_sms_remind")], "phone" => $phone, "param" => $params, "sync" => false, "uid" => $data["id"]]);
 		}
 	}
 }

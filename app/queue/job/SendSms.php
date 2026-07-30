@@ -8,10 +8,15 @@ class SendSms extends \app\queue\common\JobCommon
 	public function fire(\think\queue\Job $job, $data)
 	{
 		try {
-			$job->delete();
 			$this->handle($data);
+			$job->delete();
 		} catch (\Throwable $e) {
-			self::later(10, $data);
+			\think\facade\Log::record(static::class . " queue failed: " . $e->getMessage(), "error");
+			if ($job->attempts() >= 3) {
+				$job->delete();
+			} else {
+				$job->release(10);
+			}
 		}
 	}
 	/**

@@ -818,8 +818,7 @@ class PublicController extends \cmf\controller\BaseController
 				$data["data"]["rule"] = $adminUserModel->get_rule($result["id"]);
 				$data["data"]["user_tastes"] = \think\Db::name("user_tastes")->field(["id", "uid"], true)->where("uid", $result["id"])->find();
 				$arr_admin = ["relid" => cmf_get_current_admin_id(), "name" => "【管理员】登录提醒", "type" => "admin", "sync" => true, "admin" => true, "adminid" => cmf_get_current_admin_id(), "ip" => get_client_ip6()];
-				$curl_multi_data[0] = ["url" => "async", "data" => $arr_admin];
-				asyncCurlMulti($curl_multi_data);
+				\app\common\logic\LoginNotification::push(\app\queue\job\SendMail::class, $arr_admin);
 				$token = cmf_generate_user_token($result["id"], "web");
 				if (!empty($token)) {
 					session("token", $token);
@@ -907,8 +906,7 @@ class PublicController extends \cmf\controller\BaseController
 					$data["data"]["rule"] = $adminUserModel->get_rule($result["id"]);
 					$data["data"]["user_tastes"] = \think\Db::name("user_tastes")->field(["id", "uid"], true)->where("uid", $result["id"])->find();
 					$arr_admin = ["relid" => cmf_get_current_admin_id(), "name" => "【管理员】登录提醒", "type" => "admin", "sync" => true, "admin" => true, "adminid" => cmf_get_current_admin_id(), "ip" => get_client_ip6()];
-					$curl_multi_data[0] = ["url" => "async", "data" => $arr_admin];
-					asyncCurlMulti($curl_multi_data);
+					\app\common\logic\LoginNotification::push(\app\queue\job\SendMail::class, $arr_admin);
 					session_write_close();
 					hook("admin_login", ["adminid" => $result["id"], "admin" => $result["user_login"], "nickname" => $result["user_nickname"]]);
 					if (in_array($result["language"], ["zh-cn", "zh-hk", "en-us"])) {
