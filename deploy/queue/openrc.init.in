@@ -8,7 +8,8 @@ command_args="@PROJECT_ROOT@/think queue:work --daemon --queue @QUEUE_NAME@ --de
 command_user="@RUN_USER@"
 supervisor=supervise-daemon
 respawn_delay=3
-respawn_max=0
+respawn_max=3
+respawn_period=10
 
 depend()
 {

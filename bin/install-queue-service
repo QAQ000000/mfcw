@@ -228,6 +228,41 @@ wait_for_systemd_service()
 	return 1
 }
 
+find_openrc_worker_pid()
+{
+	pgrep -u "$RUN_USER" -f "$PROJECT_ROOT/think queue:work.*--queue $QUEUE_NAME" 2>/dev/null | sed -n '1p'
+}
+
+wait_for_openrc_worker()
+{
+	OPENRC_CHECK=0
+	OPENRC_STABLE_CHECKS=0
+	OPENRC_LAST_PID=
+	while [ "$OPENRC_CHECK" -lt 12 ]; do
+		OPENRC_CURRENT_PID=
+		if rc-service "$SERVICE_NAME" status >/dev/null 2>&1; then
+			OPENRC_CURRENT_PID=$(find_openrc_worker_pid || true)
+		fi
+		if [ -n "$OPENRC_CURRENT_PID" ]; then
+			if [ "$OPENRC_CURRENT_PID" = "$OPENRC_LAST_PID" ]; then
+				OPENRC_STABLE_CHECKS=$((OPENRC_STABLE_CHECKS + 1))
+			else
+				OPENRC_LAST_PID=$OPENRC_CURRENT_PID
+				OPENRC_STABLE_CHECKS=1
+			fi
+			if [ "$OPENRC_STABLE_CHECKS" -ge 3 ]; then
+				return 0
+			fi
+		else
+			OPENRC_LAST_PID=
+			OPENRC_STABLE_CHECKS=0
+		fi
+		OPENRC_CHECK=$((OPENRC_CHECK + 1))
+		sleep 1
+	done
+	return 1
+}
+
 case "$MANAGER" in
 	systemd)
 		command -v systemctl >/dev/null 2>&1 || die "systemctl is not installed"
@@ -313,6 +348,7 @@ case "$MANAGER" in
 	openrc)
 		command -v rc-service >/dev/null 2>&1 || die "OpenRC is not installed"
 		command -v supervise-daemon >/dev/null 2>&1 || die "OpenRC supervise-daemon is not installed"
+		command -v pgrep >/dev/null 2>&1 || die "pgrep is required for OpenRC worker health checks"
 		TARGET=/etc/init.d/$SERVICE_NAME
 		install_rendered_file "$TARGET" 0755
 		rc-update add "$SERVICE_NAME" default
@@ -320,6 +356,11 @@ case "$MANAGER" in
 			rc-service "$SERVICE_NAME" restart
 		else
 			rc-service "$SERVICE_NAME" start
+		fi
+		if ! wait_for_openrc_worker; then
+			rc-service "$SERVICE_NAME" status || true
+			rc-service "$SERVICE_NAME" stop || true
+			die "OpenRC worker failed to remain stable"
 		fi
 		rc-service "$SERVICE_NAME" status
 		;;

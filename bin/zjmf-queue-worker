@@ -78,7 +78,7 @@ case "$QUEUE_NAME" in
 		;;
 esac
 
-for value in "$QUEUE_DELAY" "$QUEUE_SLEEP" "$QUEUE_TRIES" "$QUEUE_MEMORY"; do
+for value in "$QUEUE_DELAY" "$QUEUE_SLEEP" "$QUEUE_TRIES"; do
 	case "$value" in
 		""|*[!0-9]*)
 			echo "Queue numeric options must be non-negative integers" >&2
@@ -86,6 +86,13 @@ for value in "$QUEUE_DELAY" "$QUEUE_SLEEP" "$QUEUE_TRIES" "$QUEUE_MEMORY"; do
 			;;
 	esac
 done
+
+case "$QUEUE_MEMORY" in
+	""|*[!0-9]*|0*)
+		echo "QUEUE_MEMORY must be a positive integer without leading zeroes" >&2
+		exit 1
+		;;
+esac
 
 if [ "$MODE" = check ]; then
 	PHP_VERSION=$($PHP_BIN -r 'echo PHP_VERSION;' 2>/dev/null)

@@ -16,6 +16,14 @@ fi
 
 PHP_BIN=$PHP_BIN "$ROOT/bin/zjmf-queue-worker" --check >/dev/null
 
+for invalid_memory in 0 00 0128; do
+	if PHP_BIN=$PHP_BIN QUEUE_MEMORY=$invalid_memory "$ROOT/bin/zjmf-queue-worker" --check >/dev/null 2>&1; then
+		echo "QUEUE_MEMORY=$invalid_memory must be rejected" >&2
+		exit 1
+	fi
+done
+PHP_BIN=$PHP_BIN QUEUE_MEMORY=1 "$ROOT/bin/zjmf-queue-worker" --check >/dev/null
+
 for manager in systemd supervisor openrc; do
 	output=$(
 		"$ROOT/bin/install-queue-service" \
@@ -46,5 +54,18 @@ systemd_output=$(
 )
 printf '%s\n' "$systemd_output" | grep -q "User=$(id -un)"
 printf '%s\n' "$systemd_output" | grep -q "ExecStart=$PHP_BIN"
+
+openrc_output=$(
+	"$ROOT/bin/install-queue-service" \
+		--root "$ROOT" \
+		--php "$PHP_BIN" \
+		--user "$(id -un)" \
+		--manager openrc \
+		--name test-zjmf-queue \
+		--dry-run
+)
+printf '%s\n' "$openrc_output" | grep -q 'respawn_max=3'
+printf '%s\n' "$openrc_output" | grep -q 'respawn_period=10'
+grep -q '整个 `bin/` 与' "$ROOT/README.md"
 
 echo "queue service script regression passed"

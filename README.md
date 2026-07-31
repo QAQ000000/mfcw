@@ -11,7 +11,9 @@ v10 主机的官方 3.7.6 实例迁移，且不引入 v10 或 P3 插件功能。
    `app/home/controller/V10CartController.php`。
 3. 只替换 `data/route`，不要覆盖实例的 `data/runtime`、日志或会话数据。
 4. 更新根目录 `version`、`public/upgrade` 和
-   `public/themes/cart/default/viewcart.tpl`。保留实例自己的 `public/plugins`、
+   `public/themes/cart/default/viewcart.tpl`，并复制发布包中的整个 `bin/` 与
+   `deploy/queue/` 目录；确认 `bin/install-queue-service` 和
+   `bin/zjmf-queue-worker` 保留可执行权限。保留实例自己的 `public/plugins`、
    `public/upload`、`uploads`、`downloads` 和自定义主题。
 5. 在站点根目录执行 `php public/upgrade/upgrade.php --run`。不要使用后台自动升级页
    或 Web SQL 升级入口。3.7.6 会选择幂等的 `public/upgrade/3.7.7.sql`，该迁移
