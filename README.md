@@ -16,7 +16,19 @@ v10 主机的官方 3.7.6 实例迁移，且不引入 v10 或 P3 插件功能。
 5. 在站点根目录执行 `php public/upgrade/upgrade.php --run`。不要使用后台自动升级页
    或 Web SQL 升级入口。3.7.6 会选择幂等的 `public/upgrade/3.7.7.sql`，该迁移
    保留既有 v10 数据库字段，仅增加本分支需要的日志可见性、商品缓存状态与索引。
-6. 清理框架缓存和 schema 缓存，重启 PHP-FPM 与队列 worker，再恢复 Cron。
+6. 清理框架缓存和 schema 缓存，重启 PHP-FPM。每个实例必须有自己的数据库队列
+   worker；可执行以下命令自动适配 systemd、Supervisor 或 OpenRC：
+
+   ```sh
+   ./bin/install-queue-service \
+     --root /www/wwwroot/实例目录 \
+     --php /usr/bin/php \
+     --user www-data
+   ```
+
+   安装器会自动检测服务管理器；在宝塔安全策略阻止 systemd 直接切换到 Web
+   用户时，会自动使用 `runuser` 兼容模式。完成后再恢复 Cron。详细说明见
+   `deploy/queue/README.md`。
 
 升级前必须确认没有活动的 v10 主机；如仍有 v10 商品或供应商接口，应先下架，
 并清空遗留购物车数据。

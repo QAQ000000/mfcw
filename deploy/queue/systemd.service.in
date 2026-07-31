@@ -1,0 +1,17 @@
+[Unit]
+Description=ZJMF database queue worker (@QUEUE_NAME@)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+@SYSTEMD_USER_DIRECTIVE@
+WorkingDirectory=@PROJECT_ROOT@
+ExecStart=@SYSTEMD_EXEC_COMMAND@
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

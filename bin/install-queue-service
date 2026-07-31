@@ -1,0 +1,328 @@
+#!/bin/sh
+
+set -eu
+
+case "$0" in
+	/*) SCRIPT_PATH=$0 ;;
+	*/*) SCRIPT_PATH=$PWD/$0 ;;
+	*) SCRIPT_PATH=$(command -v "$0" 2>/dev/null || true) ;;
+esac
+[ -n "${SCRIPT_PATH:-}" ] || {
+	echo "Unable to resolve the installer path" >&2
+	exit 1
+}
+SCRIPT_DIR=${SCRIPT_PATH%/*}
+SCRIPT_DIR=$(CDPATH= cd -P "$SCRIPT_DIR" && pwd)
+DEFAULT_ROOT=$(CDPATH= cd -P "$SCRIPT_DIR/.." && pwd)
+PROJECT_ROOT=$DEFAULT_ROOT
+PHP_BIN=${PHP_BIN:-}
+RUN_USER=${QUEUE_RUN_USER:-}
+MANAGER=auto
+SERVICE_NAME=zjmf-queue-default
+QUEUE_NAME=default
+DRY_RUN=0
+TEMPLATE_DIR=$DEFAULT_ROOT/deploy/queue
+
+usage()
+{
+	cat <<'EOF'
+Usage: install-queue-service [options]
+
+Options:
+  --root PATH       Project root (default: parent of this script)
+  --php PATH        PHP CLI executable (default: php in PATH)
+  --user USER       Service account (auto-detects www/www-data/nginx/apache)
+  --manager NAME    auto, systemd, supervisor, or openrc (default: auto)
+  --name NAME       Service name (default: zjmf-queue-default)
+  --queue NAME      Queue name (default: default)
+  --dry-run         Render the selected service definition without installing it
+  -h, --help        Show this help
+EOF
+}
+
+die()
+{
+	echo "$*" >&2
+	exit 1
+}
+
+need_value()
+{
+	[ "$#" -ge 2 ] || die "missing value for $1"
+}
+
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+		--root)
+			need_value "$@"
+			PROJECT_ROOT=$2
+			shift 2
+			;;
+		--php)
+			need_value "$@"
+			PHP_BIN=$2
+			shift 2
+			;;
+		--user)
+			need_value "$@"
+			RUN_USER=$2
+			shift 2
+			;;
+		--manager)
+			need_value "$@"
+			MANAGER=$2
+			shift 2
+			;;
+		--name)
+			need_value "$@"
+			SERVICE_NAME=$2
+			shift 2
+			;;
+		--queue)
+			need_value "$@"
+			QUEUE_NAME=$2
+			shift 2
+			;;
+		--dry-run)
+			DRY_RUN=1
+			shift
+			;;
+		-h|--help)
+			usage
+			exit 0
+			;;
+		*)
+			usage >&2
+			die "unknown option: $1"
+			;;
+	esac
+done
+
+[ -d "$PROJECT_ROOT" ] || die "project root does not exist: $PROJECT_ROOT"
+PROJECT_ROOT=$(CDPATH= cd -P "$PROJECT_ROOT" && pwd)
+[ -f "$PROJECT_ROOT/think" ] || die "ThinkPHP console entry is missing: $PROJECT_ROOT/think"
+[ -r "$PROJECT_ROOT/bin/zjmf-queue-worker" ] || die "queue worker launcher is not readable"
+
+if [ -z "$PHP_BIN" ]; then
+	PHP_BIN=$(command -v php 2>/dev/null || true)
+elif [ "${PHP_BIN#/}" = "$PHP_BIN" ]; then
+	PHP_BIN=$(command -v "$PHP_BIN" 2>/dev/null || true)
+fi
+[ -n "$PHP_BIN" ] && [ -x "$PHP_BIN" ] || die "PHP CLI executable was not found"
+
+case "$PROJECT_ROOT:$PHP_BIN" in
+	*[[:space:]]*) die "project and PHP paths must not contain whitespace" ;;
+esac
+case "$SERVICE_NAME" in
+	""|*[!A-Za-z0-9_.-]*) die "service name contains unsupported characters" ;;
+esac
+case "$QUEUE_NAME" in
+	""|*[!A-Za-z0-9_,.-]*) die "queue name contains unsupported characters" ;;
+esac
+
+if [ -z "$RUN_USER" ]; then
+	for candidate in www www-data nginx apache; do
+		if id "$candidate" >/dev/null 2>&1; then
+			RUN_USER=$candidate
+			break
+		fi
+	done
+fi
+[ -n "$RUN_USER" ] || die "service account could not be detected; use --user"
+id "$RUN_USER" >/dev/null 2>&1 || die "service account does not exist: $RUN_USER"
+
+QUEUE_COMMAND="$PHP_BIN $PROJECT_ROOT/think queue:work --daemon --queue $QUEUE_NAME --delay 10 --sleep 2 --tries 3 --memory 128"
+SYSTEMD_USER_DIRECTIVE="User=$RUN_USER"
+SYSTEMD_EXEC_COMMAND=$QUEUE_COMMAND
+
+detect_manager()
+{
+	if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+		echo systemd
+	elif command -v supervisorctl >/dev/null 2>&1; then
+		echo supervisor
+	elif command -v rc-service >/dev/null 2>&1; then
+		echo openrc
+	else
+		return 1
+	fi
+}
+
+if [ "$MANAGER" = auto ]; then
+	MANAGER=$(detect_manager) || die "no supported service manager was found"
+fi
+case "$MANAGER" in
+	systemd|supervisor|openrc) ;;
+	*) die "unsupported service manager: $MANAGER" ;;
+esac
+
+case "$MANAGER" in
+	systemd) TEMPLATE=$TEMPLATE_DIR/systemd.service.in ;;
+	supervisor) TEMPLATE=$TEMPLATE_DIR/supervisor.conf.in ;;
+	openrc) TEMPLATE=$TEMPLATE_DIR/openrc.init.in ;;
+esac
+[ -f "$TEMPLATE" ] || die "service template is missing: $TEMPLATE"
+
+escape_sed()
+{
+	printf '%s' "$1" | sed 's/[\\&|]/\\&/g'
+}
+
+render_template()
+{
+	root=$(escape_sed "$PROJECT_ROOT")
+	php=$(escape_sed "$PHP_BIN")
+	user=$(escape_sed "$RUN_USER")
+	service=$(escape_sed "$SERVICE_NAME")
+	queue=$(escape_sed "$QUEUE_NAME")
+	systemd_user_directive=$(escape_sed "$SYSTEMD_USER_DIRECTIVE")
+	systemd_exec_command=$(escape_sed "$SYSTEMD_EXEC_COMMAND")
+	sed \
+		-e "s|@PROJECT_ROOT@|$root|g" \
+		-e "s|@PHP_BIN@|$php|g" \
+		-e "s|@RUN_USER@|$user|g" \
+		-e "s|@SERVICE_NAME@|$service|g" \
+		-e "s|@QUEUE_NAME@|$queue|g" \
+		-e "s|@SYSTEMD_USER_DIRECTIVE@|$systemd_user_directive|g" \
+		-e "s|@SYSTEMD_EXEC_COMMAND@|$systemd_exec_command|g" \
+		"$TEMPLATE"
+}
+
+if [ "$DRY_RUN" -eq 1 ]; then
+	echo "# manager=$MANAGER"
+	render_template
+	exit 0
+fi
+
+[ "$(id -u)" -eq 0 ] || die "service installation must run as root"
+
+install_rendered_file()
+{
+	target=$1
+	mode=$2
+	tmp=$(mktemp "${target}.tmp.XXXXXX")
+	trap 'rm -f "$tmp"' EXIT HUP INT TERM
+	render_template > "$tmp"
+	chmod "$mode" "$tmp"
+	mv -f "$tmp" "$target"
+	trap - EXIT HUP INT TERM
+}
+
+wait_for_systemd_service()
+{
+	SYSTEMD_CHECK=0
+	SYSTEMD_STABLE_CHECKS=0
+	sleep 1
+	while [ "$SYSTEMD_CHECK" -lt 10 ]; do
+		if systemctl is-active --quiet "$SERVICE_NAME.service"; then
+			SYSTEMD_STABLE_CHECKS=$((SYSTEMD_STABLE_CHECKS + 1))
+			if [ "$SYSTEMD_STABLE_CHECKS" -ge 3 ]; then
+				return 0
+			fi
+		else
+			SYSTEMD_STABLE_CHECKS=0
+		fi
+		SYSTEMD_CHECK=$((SYSTEMD_CHECK + 1))
+		sleep 1
+	done
+	return 1
+}
+
+case "$MANAGER" in
+	systemd)
+		command -v systemctl >/dev/null 2>&1 || die "systemctl is not installed"
+		TARGET=/etc/systemd/system/$SERVICE_NAME.service
+		install_rendered_file "$TARGET" 0644
+		systemctl daemon-reload
+		systemctl enable "$SERVICE_NAME.service"
+		systemctl restart "$SERVICE_NAME.service"
+		SYSTEMD_MODE=user
+		if ! wait_for_systemd_service; then
+			systemctl stop "$SERVICE_NAME.service" || true
+			RUNUSER_BIN=$(command -v runuser 2>/dev/null || true)
+			if [ -z "$RUNUSER_BIN" ]; then
+				systemctl --no-pager --full status "$SERVICE_NAME.service" || true
+				journalctl -u "$SERVICE_NAME.service" -n 30 --no-pager || true
+				die "systemd service failed and runuser fallback is unavailable"
+			fi
+			echo "standard systemd user mode failed; retrying with runuser compatibility mode"
+			SYSTEMD_MODE=runuser
+			SYSTEMD_USER_DIRECTIVE=
+			SYSTEMD_EXEC_COMMAND="$RUNUSER_BIN -u $RUN_USER -- $QUEUE_COMMAND"
+			install_rendered_file "$TARGET" 0644
+			systemctl daemon-reload
+			systemctl restart "$SERVICE_NAME.service"
+		fi
+		if ! wait_for_systemd_service; then
+			systemctl --no-pager --full status "$SERVICE_NAME.service" || true
+			journalctl -u "$SERVICE_NAME.service" -n 30 --no-pager || true
+			systemctl stop "$SERVICE_NAME.service" || true
+			die "systemd service failed to become active"
+		fi
+		echo "systemd launch mode: $SYSTEMD_MODE"
+		systemctl --no-pager --full status "$SERVICE_NAME.service" | sed -n '1,8p'
+		;;
+	supervisor)
+		command -v supervisorctl >/dev/null 2>&1 || die "supervisorctl is not installed"
+		SUPERVISOR_SERVICE_KNOWN=0
+		if supervisorctl status "$SERVICE_NAME" >/dev/null 2>&1; then
+			SUPERVISOR_SERVICE_KNOWN=1
+		fi
+		if [ -d /etc/supervisor/conf.d ]; then
+			TARGET=/etc/supervisor/conf.d/$SERVICE_NAME.conf
+		elif [ -d /etc/supervisord.d ]; then
+			TARGET=/etc/supervisord.d/$SERVICE_NAME.ini
+		else
+			die "Supervisor include directory was not found"
+		fi
+		mkdir -p /var/log/supervisor
+		install_rendered_file "$TARGET" 0644
+		SUPERVISOR_REREAD=$(supervisorctl reread)
+		printf '%s\n' "$SUPERVISOR_REREAD"
+		supervisorctl update
+		case "$SUPERVISOR_REREAD" in
+			*"$SERVICE_NAME: changed"*|*"$SERVICE_NAME: available"*) ;;
+			*)
+				if [ "$SUPERVISOR_SERVICE_KNOWN" -eq 1 ]; then
+					supervisorctl restart "$SERVICE_NAME"
+				fi
+				;;
+		esac
+		SUPERVISOR_RUNNING=0
+		SUPERVISOR_CHECK=0
+		while [ "$SUPERVISOR_CHECK" -lt 10 ]; do
+			SUPERVISOR_STATE=$(supervisorctl status "$SERVICE_NAME" 2>/dev/null | awk '{print $2}')
+			case "$SUPERVISOR_STATE" in
+				RUNNING)
+					SUPERVISOR_RUNNING=1
+					break
+					;;
+				STOPPED|EXITED|FATAL|BACKOFF)
+					supervisorctl start "$SERVICE_NAME" >/dev/null 2>&1 || true
+					;;
+			esac
+			SUPERVISOR_CHECK=$((SUPERVISOR_CHECK + 1))
+			sleep 1
+		done
+		if [ "$SUPERVISOR_RUNNING" -ne 1 ]; then
+			supervisorctl status "$SERVICE_NAME" || true
+			die "Supervisor service failed to become RUNNING"
+		fi
+		supervisorctl status "$SERVICE_NAME"
+		;;
+	openrc)
+		command -v rc-service >/dev/null 2>&1 || die "OpenRC is not installed"
+		command -v supervise-daemon >/dev/null 2>&1 || die "OpenRC supervise-daemon is not installed"
+		TARGET=/etc/init.d/$SERVICE_NAME
+		install_rendered_file "$TARGET" 0755
+		rc-update add "$SERVICE_NAME" default
+		if rc-service "$SERVICE_NAME" status >/dev/null 2>&1; then
+			rc-service "$SERVICE_NAME" restart
+		else
+			rc-service "$SERVICE_NAME" start
+		fi
+		rc-service "$SERVICE_NAME" status
+		;;
+esac
+
+echo "installed $SERVICE_NAME with $MANAGER"

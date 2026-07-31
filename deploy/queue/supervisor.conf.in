@@ -1,0 +1,16 @@
+[program:@SERVICE_NAME@]
+command=@PHP_BIN@ @PROJECT_ROOT@/think queue:work --daemon --queue @QUEUE_NAME@ --delay 10 --sleep 2 --tries 3 --memory 128
+directory=@PROJECT_ROOT@
+user=@RUN_USER@
+numprocs=1
+autostart=true
+autorestart=true
+startsecs=3
+startretries=3
+stopasgroup=true
+killasgroup=true
+stopwaitsecs=30
+redirect_stderr=true
+stdout_logfile=/var/log/supervisor/@SERVICE_NAME@.log
+stdout_logfile_maxbytes=10MB
+stdout_logfile_backups=3

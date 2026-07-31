@@ -1,0 +1,117 @@
+#!/bin/sh
+
+set -eu
+
+case "$0" in
+	/*) SCRIPT_PATH=$0 ;;
+	*/*) SCRIPT_PATH=$PWD/$0 ;;
+	*) SCRIPT_PATH=$(command -v "$0" 2>/dev/null || true) ;;
+esac
+[ -n "${SCRIPT_PATH:-}" ] || {
+	echo "Unable to resolve the queue worker path" >&2
+	exit 1
+}
+SCRIPT_DIR=${SCRIPT_PATH%/*}
+SCRIPT_DIR=$(CDPATH= cd -P "$SCRIPT_DIR" && pwd)
+PROJECT_ROOT=$(CDPATH= cd -P "$SCRIPT_DIR/.." && pwd)
+
+PHP_BIN=${PHP_BIN:-}
+QUEUE_NAME=${QUEUE_NAME:-default}
+QUEUE_DELAY=${QUEUE_DELAY:-10}
+QUEUE_SLEEP=${QUEUE_SLEEP:-2}
+QUEUE_TRIES=${QUEUE_TRIES:-3}
+QUEUE_MEMORY=${QUEUE_MEMORY:-128}
+MODE=daemon
+
+usage()
+{
+	cat <<'EOF'
+Usage: zjmf-queue-worker [--check|--once]
+
+Environment:
+  PHP_BIN       PHP CLI executable (required when php is not in PATH)
+  QUEUE_NAME    Queue name (default: default)
+  QUEUE_DELAY   Failed-job retry delay in seconds (default: 10)
+  QUEUE_SLEEP   Idle sleep in seconds (default: 2)
+  QUEUE_TRIES   Maximum attempts (default: 3)
+  QUEUE_MEMORY  Memory limit in MB (default: 128)
+EOF
+}
+
+case "${1:-}" in
+	"")
+		;;
+	--check)
+		MODE=check
+		;;
+	--once)
+		MODE=once
+		;;
+	-h|--help)
+		usage
+		exit 0
+		;;
+	*)
+		usage >&2
+		exit 2
+		;;
+esac
+
+if [ -z "$PHP_BIN" ]; then
+	PHP_BIN=$(command -v php 2>/dev/null || true)
+fi
+
+if [ -z "$PHP_BIN" ] || [ ! -x "$PHP_BIN" ]; then
+	echo "PHP CLI executable was not found; set PHP_BIN" >&2
+	exit 1
+fi
+
+if [ ! -f "$PROJECT_ROOT/think" ]; then
+	echo "ThinkPHP console entry was not found at $PROJECT_ROOT/think" >&2
+	exit 1
+fi
+
+case "$QUEUE_NAME" in
+	""|*[!A-Za-z0-9_,.-]*)
+		echo "QUEUE_NAME contains unsupported characters" >&2
+		exit 1
+		;;
+esac
+
+for value in "$QUEUE_DELAY" "$QUEUE_SLEEP" "$QUEUE_TRIES" "$QUEUE_MEMORY"; do
+	case "$value" in
+		""|*[!0-9]*)
+			echo "Queue numeric options must be non-negative integers" >&2
+			exit 1
+			;;
+	esac
+done
+
+if [ "$MODE" = check ]; then
+	PHP_VERSION=$($PHP_BIN -r 'echo PHP_VERSION;' 2>/dev/null)
+	echo "queue worker configuration is valid"
+	echo "project_root=$PROJECT_ROOT"
+	echo "php_bin=$PHP_BIN"
+	echo "php_version=$PHP_VERSION"
+	echo "queue=$QUEUE_NAME"
+	exit 0
+fi
+
+cd "$PROJECT_ROOT"
+
+if [ "$MODE" = once ]; then
+	exec "$PHP_BIN" "$PROJECT_ROOT/think" queue:work \
+		--queue "$QUEUE_NAME" \
+		--delay "$QUEUE_DELAY" \
+		--sleep 0 \
+		--tries "$QUEUE_TRIES" \
+		--memory "$QUEUE_MEMORY"
+fi
+
+exec "$PHP_BIN" "$PROJECT_ROOT/think" queue:work \
+	--daemon \
+	--queue "$QUEUE_NAME" \
+	--delay "$QUEUE_DELAY" \
+	--sleep "$QUEUE_SLEEP" \
+	--tries "$QUEUE_TRIES" \
+	--memory "$QUEUE_MEMORY"
