@@ -25,12 +25,13 @@ v10 主机的官方 3.7.6 实例迁移，且不引入 v10 或 P3 插件功能。
    ./bin/install-queue-service \
      --root /www/wwwroot/实例目录 \
      --php /usr/bin/php \
-     --user www-data
+     --user www
    ```
 
-   安装器会自动检测服务管理器；在宝塔安全策略阻止 systemd 直接切换到 Web
-   用户时，会自动使用 `runuser` 兼容模式。完成后再恢复 Cron。详细说明见
-   `deploy/queue/README.md`。
+   示例中的 `www` 是宝塔默认站点用户；其他环境必须替换为站点目录的实际所有者，
+   不要照抄用户名称。安装器会自动检测服务管理器；在宝塔安全策略阻止 systemd
+   直接切换到 Web 用户时，会自动使用 `runuser` 兼容模式。完成后再恢复 Cron。
+   详细说明见 `deploy/queue/README.md`。
 
 升级前必须确认没有活动的 v10 主机；如仍有 v10 商品或供应商接口，应先下架，
 并清空遗留购物车数据。

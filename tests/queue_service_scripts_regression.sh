@@ -8,6 +8,14 @@ PHP_BIN=$(command -v php)
 sh -n "$ROOT/bin/zjmf-queue-worker"
 sh -n "$ROOT/bin/install-queue-service"
 sh -n "$ROOT/deploy/queue/openrc.init.in"
+$PHP_BIN -l "$ROOT/bin/zjmf-queue-bootstrap.php" >/dev/null
+
+bootstrap_pid_file=$(mktemp)
+trap 'rm -f "$bootstrap_pid_file"' EXIT HUP INT TERM
+ZJMF_QUEUE_PID_FILE=$bootstrap_pid_file $PHP_BIN "$ROOT/bin/zjmf-queue-bootstrap.php" --version >/dev/null
+grep -Eq '^[0-9]+$' "$bootstrap_pid_file"
+rm -f "$bootstrap_pid_file"
+trap - EXIT HUP INT TERM
 
 if sed -n '1,40p' "$ROOT/bin/zjmf-queue-worker" | grep -q 'dirname'; then
 	echo "queue worker startup must not invoke external dirname" >&2
@@ -66,6 +74,14 @@ openrc_output=$(
 )
 printf '%s\n' "$openrc_output" | grep -q 'respawn_max=3'
 printf '%s\n' "$openrc_output" | grep -q 'respawn_period=10'
+printf '%s\n' "$openrc_output" | grep -q 'worker_pidfile="/run/test-zjmf-queue.worker.pid"'
+printf '%s\n' "$openrc_output" | grep -q 'zjmf-queue-bootstrap.php queue:work'
+if grep -q 'pgrep' "$ROOT/bin/install-queue-service"; then
+	echo "OpenRC health checks must not use global pgrep matching" >&2
+	exit 1
+fi
 grep -q '整个 `bin/` 与' "$ROOT/README.md"
+grep -q -- '--user www' "$ROOT/README.md"
+grep -q '站点目录的实际所有者' "$ROOT/README.md"
 
 echo "queue service script regression passed"

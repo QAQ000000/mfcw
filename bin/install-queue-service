@@ -228,9 +228,41 @@ wait_for_systemd_service()
 	return 1
 }
 
-find_openrc_worker_pid()
+read_openrc_worker_pid()
 {
-	pgrep -u "$RUN_USER" -f "$PROJECT_ROOT/think queue:work.*--queue $QUEUE_NAME" 2>/dev/null | sed -n '1p'
+	[ -r "$OPENRC_WORKER_PID_FILE" ] || return 1
+	OPENRC_PID=
+	IFS= read -r OPENRC_PID < "$OPENRC_WORKER_PID_FILE" || true
+	case "$OPENRC_PID" in
+		""|*[!0-9]*) return 1 ;;
+	esac
+	[ -r "/proc/$OPENRC_PID/cmdline" ] || return 1
+	printf '%s\n' "$OPENRC_PID"
+}
+
+openrc_worker_command_matches()
+{
+	OPENRC_PID=$1
+	"$PHP_BIN" -r '
+        $pid = $argv[1];
+        $expectedExecutable = realpath($argv[2]);
+        $actualExecutable = realpath("/proc/{$pid}/exe");
+        if ($expectedExecutable === false || $actualExecutable !== $expectedExecutable) {
+            exit(1);
+        }
+        $raw = @file_get_contents("/proc/{$pid}/cmdline");
+        if ($raw === false || $raw === "") {
+            exit(1);
+        }
+        $actual = array_slice(explode("\0", rtrim($raw, "\0")), 1);
+        $expected = array_slice($argv, 3);
+        exit($actual === $expected ? 0 : 1);
+    ' \
+		"$OPENRC_PID" \
+		"$PHP_BIN" \
+		"$PROJECT_ROOT/bin/zjmf-queue-bootstrap.php" \
+		queue:work --daemon --queue "$QUEUE_NAME" \
+		--delay 10 --sleep 2 --tries 3 --memory 128
 }
 
 wait_for_openrc_worker()
@@ -241,7 +273,10 @@ wait_for_openrc_worker()
 	while [ "$OPENRC_CHECK" -lt 12 ]; do
 		OPENRC_CURRENT_PID=
 		if rc-service "$SERVICE_NAME" status >/dev/null 2>&1; then
-			OPENRC_CURRENT_PID=$(find_openrc_worker_pid || true)
+			OPENRC_CURRENT_PID=$(read_openrc_worker_pid || true)
+			if [ -n "$OPENRC_CURRENT_PID" ] && ! openrc_worker_command_matches "$OPENRC_CURRENT_PID"; then
+				OPENRC_CURRENT_PID=
+			fi
 		fi
 		if [ -n "$OPENRC_CURRENT_PID" ]; then
 			if [ "$OPENRC_CURRENT_PID" = "$OPENRC_LAST_PID" ]; then
@@ -348,7 +383,8 @@ case "$MANAGER" in
 	openrc)
 		command -v rc-service >/dev/null 2>&1 || die "OpenRC is not installed"
 		command -v supervise-daemon >/dev/null 2>&1 || die "OpenRC supervise-daemon is not installed"
-		command -v pgrep >/dev/null 2>&1 || die "pgrep is required for OpenRC worker health checks"
+		[ -r "$PROJECT_ROOT/bin/zjmf-queue-bootstrap.php" ] || die "OpenRC queue bootstrap is missing"
+		OPENRC_WORKER_PID_FILE=/run/$SERVICE_NAME.worker.pid
 		TARGET=/etc/init.d/$SERVICE_NAME
 		install_rendered_file "$TARGET" 0755
 		rc-update add "$SERVICE_NAME" default

@@ -4,12 +4,25 @@ name="ZJMF database queue worker (@QUEUE_NAME@)"
 description="$name"
 directory="@PROJECT_ROOT@"
 command="@PHP_BIN@"
-command_args="@PROJECT_ROOT@/think queue:work --daemon --queue @QUEUE_NAME@ --delay 10 --sleep 2 --tries 3 --memory 128"
+command_args="@PROJECT_ROOT@/bin/zjmf-queue-bootstrap.php queue:work --daemon --queue @QUEUE_NAME@ --delay 10 --sleep 2 --tries 3 --memory 128"
 command_user="@RUN_USER@"
 supervisor=supervise-daemon
 respawn_delay=3
 respawn_max=3
 respawn_period=10
+worker_pidfile="/run/@SERVICE_NAME@.worker.pid"
+export ZJMF_QUEUE_PID_FILE="$worker_pidfile"
+
+start_pre()
+{
+	checkpath --file --owner @RUN_USER@ --mode 0644 "$worker_pidfile"
+	: > "$worker_pidfile"
+}
+
+stop_post()
+{
+	rm -f "$worker_pidfile"
+}
 
 depend()
 {
