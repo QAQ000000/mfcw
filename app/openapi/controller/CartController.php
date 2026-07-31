@@ -132,9 +132,24 @@ class CartController extends \cmf\controller\HomeBaseController
 				} else {
 					$pids = \think\Db::name("products")->where("gid", $g["id"])->column("id");
 				}
-				foreach ($pids as $pid) {
-					$cart = new \app\common\logic\Cart();
-					$product = $cart->getProductCycle($pid, $currencyid);
+					foreach ($pids as $pid) {
+						$product_meta = \think\Db::name("products")->where("id", $pid)->find();
+						$supplier_version = "";
+						$supplier_sync_status = "ready";
+						if (($product_meta["api_type"] ?? "") === "zjmf_api") {
+							$product_logic = new \app\common\logic\Product();
+							$supplier_version = \app\common\logic\Product::cartProductVersion($product_meta);
+							$auto_update = intval(\think\Db::name("zjmf_finance_api")->where("id", intval($product_meta["zjmf_api_id"]))->value("auto_update"));
+							if ($auto_update === 1 && isset($param["product_id"])) {
+								$product_logic->queueProductSyncForCart($pid);
+								$sync_state = $product_logic->getCartProductSyncState($pid);
+								$supplier_sync_status = (string) ($sync_state["status"] ?? "queued");
+							}
+						}
+						$cart = new \app\common\logic\Cart();
+						$product = $cart->getProductCycle($pid, $currencyid);
+						$product["supplier_version"] = $supplier_version;
+						$product["supplier_sync_status"] = $supplier_sync_status;
 					$customfields = new \app\common\logic\Customfields();
 					$fields = $customfields->getCartCustomField($pid);
 					$config_logic = new \app\common\logic\ConfigOptions();
@@ -437,7 +452,7 @@ class CartController extends \cmf\controller\HomeBaseController
 			}
 		}
 		$hostid = intval($param["hostid"]);
-		$res = $shop->addProduct($pid, $billingcycle, 0, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid);
+			$res = $shop->addProduct($pid, $billingcycle, 0, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid, 0, $param["supplier_version"] ?? null);
 		if ($res["status"] == "success") {
 			return json(["status" => 200, "msg" => "Added successfully"]);
 		} else {
@@ -628,8 +643,19 @@ class CartController extends \cmf\controller\HomeBaseController
 			if ($cartLimit["status"] !== "success") {
 				return json(["status" => 400, "msg" => "The cart exceeds the allowed product quantity"]);
 			}
-			$cart_data = $cartLimit["data"];
-		$prod = [];
+				$cart_data = $cartLimit["data"];
+				$productLogic = new \app\common\logic\Product();
+				foreach ($cart_data["products"] as $cartProduct) {
+					$snapshot = $productLogic->validateCartProductSnapshot($cartProduct["pid"], $cartProduct["supplier_version"] ?? null);
+					if (($snapshot["status"] ?? 400) !== 200) {
+						return json(["status" => $snapshot["status"], "msg" => $snapshot["msg"]]);
+					}
+					$configValidation = $shop->validateSupplierConfigSelections($cartProduct["pid"], $cartProduct["configoptions"] ?? []);
+					if ($configValidation["status"] !== "success") {
+						return json(["status" => 409, "msg" => $configValidation["msg"]]);
+					}
+				}
+			$prod = [];
 		foreach ($cart_data["products"] as $k => $value) {
 			$product = \think\Db::name("products")->field("id,name,is_truename,clientscount,api_type,upstream_pid,zjmf_api_id,pay_type")->where("id", $value["pid"])->find();
 			$api = \think\Db::name("api_user_product")->field("ontrial,qty")->where("uid", $uid)->where("pid", $value["pid"])->find();
@@ -1244,9 +1270,20 @@ class CartController extends \cmf\controller\HomeBaseController
 					}
 				}
 			}
-			$inventory_product_ids = [];
-			\think\Db::startTrans();
-		try {
+				$inventory_product_ids = [];
+				$orderSyncLocks = $productLogic->acquireCartProductOrderLocks(array_column($cart_data["products"], "pid"));
+				if ($orderSyncLocks === false) {
+					return json(["status" => 409, "msg" => "Product information is being updated; try again shortly"]);
+				}
+				foreach ($cart_data["products"] as $cartProduct) {
+					$finalSnapshot = $productLogic->validateCartProductSnapshot($cartProduct["pid"], $cartProduct["supplier_version"] ?? null, false);
+					if (($finalSnapshot["status"] ?? 400) !== 200) {
+						$productLogic->releaseCartProductOrderLocks($orderSyncLocks);
+						return json(["status" => $finalSnapshot["status"], "msg" => $finalSnapshot["msg"]]);
+					}
+				}
+			try {
+				\think\Db::startTrans();
 			$inventoryRequirements = [];
 			foreach ($product_items as $item) {
 				$productId = intval($item["productid"]);
@@ -1411,12 +1448,13 @@ class CartController extends \cmf\controller\HomeBaseController
 				cookie("shop_cookie", null);
 				$result["status"] = 200;
 			$result["msg"] = "Successful purchase";
-			} catch (\Throwable $e) {
+				} catch (\Throwable $e) {
 			$result["status"] = 400;
 				$result["msg"] = $e->getMessage();
-				\think\Db::rollback();
-			}
-			if ($cartLock instanceof \app\common\logic\ShopDatabaseLock) {
+					\think\Db::rollback();
+				}
+				$productLogic->releaseCartProductOrderLocks($orderSyncLocks);
+				if ($cartLock instanceof \app\common\logic\ShopDatabaseLock) {
 				$cartLock->release();
 			}
 				if ($result["status"] != 200) {
@@ -1573,7 +1611,7 @@ class CartController extends \cmf\controller\HomeBaseController
 	public function goodsConfig()
 	{
 		$param = $this->request->param();
-		$pid = intval($param["pid"]);
+			$pid = intval($param["pid"]);
 		$billingcycle = $param["billingcycle"] ?: "";
 		$uid = request()->uid;
 		$currencyid = priorityCurrency($uid);
@@ -1582,8 +1620,23 @@ class CartController extends \cmf\controller\HomeBaseController
 			$product_model = new \app\common\model\ProductModel();
 			$billingcycle = $product_model->getProductCycle($pid, $currencyid, "", "", "", "", "", "", 1)[0]["billingcycle"] ?: "";
 		}
-		$cart = new \app\common\logic\Cart();
-		$product = $cart->getProductCycle($pid, $currencyid);
+			$product_meta = \think\Db::name("products")->where("id", $pid)->find();
+			$supplier_version = "";
+			$supplier_sync_status = "ready";
+			if (($product_meta["api_type"] ?? "") === "zjmf_api") {
+				$product_logic = new \app\common\logic\Product();
+				$supplier_version = \app\common\logic\Product::cartProductVersion($product_meta);
+				$auto_update = intval(\think\Db::name("zjmf_finance_api")->where("id", intval($product_meta["zjmf_api_id"]))->value("auto_update"));
+				if ($auto_update === 1) {
+					$product_logic->queueProductSyncForCart($pid);
+					$sync_state = $product_logic->getCartProductSyncState($pid);
+					$supplier_sync_status = (string) ($sync_state["status"] ?? "queued");
+				}
+			}
+			$cart = new \app\common\logic\Cart();
+			$product = $cart->getProductCycle($pid, $currencyid);
+			$product["supplier_version"] = $supplier_version;
+			$product["supplier_sync_status"] = $supplier_sync_status;
 		$customfields = new \app\common\logic\Customfields();
 		$fields = $customfields->getCartCustomField($pid);
 		$config_logic = new \app\common\logic\ConfigOptions();
@@ -2047,7 +2100,7 @@ class CartController extends \cmf\controller\HomeBaseController
 			}
 		}
 		$hostid = intval($param["hostid"]);
-		$res = $shop->addProduct($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid, $checkout);
+			$res = $shop->addProduct($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid, $checkout, $param["supplier_version"] ?? null);
 		if ($res["status"] == "success") {
 			if ($checkout == 1) {
 				return json(["status" => 200, "msg" => lang("ADD SUCCESS"), "data" => ["i" => $res["i"]]]);
@@ -2072,7 +2125,22 @@ class CartController extends \cmf\controller\HomeBaseController
 		$customfields = new \app\common\logic\Customfields();
 		$fields = $customfields->getCartCustomField($pid);
 		$cart = new \app\common\logic\Cart();
-		$product = $cart->getProductCycle($pid, $currencyid);
+			$product = $cart->getProductCycle($pid, $currencyid);
+			$product_meta = \think\Db::name("products")->where("id", $pid)->find();
+			$supplier_version = "";
+			$supplier_sync_status = "ready";
+			if (($product_meta["api_type"] ?? "") === "zjmf_api") {
+				$product_logic = new \app\common\logic\Product();
+				$supplier_version = \app\common\logic\Product::cartProductVersion($product_meta);
+				$auto_update = intval(\think\Db::name("zjmf_finance_api")->where("id", intval($product_meta["zjmf_api_id"]))->value("auto_update"));
+				if ($auto_update === 1) {
+					$product_logic->queueProductSyncForCart($pid);
+					$sync_state = $product_logic->getCartProductSyncState($pid);
+					$supplier_sync_status = (string) ($sync_state["status"] ?? "queued");
+				}
+			}
+			$product["supplier_version"] = $supplier_version;
+			$product["supplier_sync_status"] = $supplier_sync_status;
 		$config_logic = new \app\common\logic\ConfigOptions();
 		$alloption = $config_logic->getConfigInfo($pid);
 		$alloption = $config_logic->configShow($alloption, $currencyid, $billingcycle);
@@ -2144,7 +2212,7 @@ class CartController extends \cmf\controller\HomeBaseController
 			$password = "";
 		}
 		$hostid = intval($param["hostid"]);
-		$res = $shop->editProduct($i, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid);
+			$res = $shop->editProduct($i, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid, $param["supplier_version"] ?? null);
 		if ($res["status"] == "success") {
 			return jsons(["status" => 200, "msg" => lang("ADD SUCCESS")]);
 		} else {

@@ -12,6 +12,8 @@ function assertUpstreamSyncCompatibility($condition, $message)
 
 use app\common\logic\Product;
 
+assertUpstreamSyncCompatibility(Product::cartProductVersion(["location_version" => 7, "upstream_version" => 99]) === "7", "cart snapshots must use the downstream-visible location version");
+
 $upstreamOnly = Product::normalizeSupplierProductState([
 	"api_type" => "zjmf_api",
 	"stock_control" => 0,
@@ -61,6 +63,7 @@ $productLogic = file_get_contents($root . "/app/common/logic/Product.php");
 $cartLogic = file_get_contents($root . "/app/common/logic/Cart.php");
 $homeCart = file_get_contents($root . "/app/home/controller/CartController.php");
 $currency = file_get_contents($root . "/app/admin/controller/CurrencyController.php");
+$hostLogic = file_get_contents($root . "/app/common/logic/Host.php");
 
 assertUpstreamSyncCompatibility(strpos($routes, 'Route::get("api/product/proinfo", "api/product/proInfo")->middleware("Check")') !== false, "proinfo must require an authenticated supplier token");
 assertUpstreamSyncCompatibility(strpos($routes, 'Route::get("api/product/prodetail", "api/product/proDetail")->middleware("Check")') !== false, "prodetail must require an authenticated supplier token");
@@ -72,5 +75,6 @@ assertUpstreamSyncCompatibility(strpos($homeCart, 'a.upstream_stock_control,a.up
 assertUpstreamSyncCompatibility(strpos($homeCart, '"cart/stock_control", ["pid" => $product["upstream_pid"]], 3, "GET"') !== false, "stock validation must use a bounded upstream timeout");
 assertUpstreamSyncCompatibility(strpos($homeCart, '商品库存校验暂不可用，请稍后重试') !== false, "supplier stock validation failures must fail closed");
 assertUpstreamSyncCompatibility(strpos($currency, 'invalidateProductCatalogCache(true)') !== false && strpos($currency, 'setInc("location_version")') !== false, "currency changes that affect supplier prices must increment product versions");
+assertUpstreamSyncCompatibility(strpos($hostLogic, '$post_data["supplier_version"] = (string) intval($host["upstream_version"]);') !== false, "reseller provisioning must forward the upstream location snapshot to maintained suppliers");
 
 fwrite(STDOUT, "upstream sync compatibility regression checks passed" . PHP_EOL);

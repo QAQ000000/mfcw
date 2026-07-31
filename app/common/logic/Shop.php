@@ -218,9 +218,11 @@ class Shop
 			: ["uid" => $this->uid, "products" => [], "promo" => ""];
 		$this->save();
 	}
-	private function checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $productqty, $os, $host, $password, $hostid)
+	private function checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $productqty, $os, $host, $password, $hostid, $supplierVersion = null, $validateSupplierSnapshot = true)
 	{
 		$addCartArr = [];
+		$configoption = is_array($configoption) ? $configoption : [];
+		$customfield = is_array($customfield) ? $customfield : [];
 		$productqty = self::normalizeProductQuantity($productqty);
 		if ($productqty === false) {
 			return ["status" => "error", "msg" => "产品数量必须是1至" . self::MAX_PRODUCT_QUANTITY . "之间的整数"];
@@ -234,6 +236,21 @@ class Shop
 			}
 			if (($product_data["api_type"] ?? "") === "resource") {
 				return ["status" => "error", "msg" => "该产品类型在当前版本中不受支持"];
+			}
+			if (($product_data["api_type"] ?? "") === "zjmf_api") {
+				if ($validateSupplierSnapshot) {
+					$snapshot = (new \app\common\logic\Product())->validateCartProductSnapshot($pid, $supplierVersion);
+					if (($snapshot["status"] ?? 400) !== 200) {
+						return ["status" => "error", "msg" => $snapshot["msg"]];
+					}
+					$configValidation = $this->validateSupplierConfigSelections($pid, $configoption);
+					if ($configValidation["status"] !== "success") {
+						return $configValidation;
+					}
+					$addCartArr["supplier_version"] = $snapshot["version"];
+				} else {
+					$addCartArr["supplier_version"] = is_string($supplierVersion) ? $supplierVersion : "";
+				}
 			}
 		$product_model = new \app\common\model\ProductModel();
 		if (!$product_model->checkProductPrice($pid, $billingcycle, $currencyid)) {
@@ -280,6 +297,13 @@ class Shop
 							if (!empty($exists_data)) {
 								$addCartArr["configoptions"][$config_id] = $configoption[$config_id];
 							} else {
+								if (($product_data["api_type"] ?? "") === "zjmf_api") {
+									if ($validateSupplierSnapshot) {
+										return ["status" => "error", "msg" => "商品配置已更新，请刷新后重新选择"];
+									}
+									$addCartArr["configoptions"][$config_id] = $configoption[$config_id];
+									continue;
+								}
 								$sub_data = \think\Db::name("product_config_options_sub")->where("config_id", $config_id)->where("hidden", 0)->order("sort_order asc")->order("id", "asc")->find();
 								if (!empty($sub_data)) {
 									$addCartArr["configoptions"][$config_id] = $sub_data["id"];
@@ -294,6 +318,13 @@ class Shop
 							if (!empty($exists_data)) {
 								$addCartArr["configoptions"][$config_id] = $configoption[$config_id];
 							} else {
+								if (($product_data["api_type"] ?? "") === "zjmf_api") {
+									if ($validateSupplierSnapshot) {
+										return ["status" => "error", "msg" => "商品配置已更新，请刷新后重新选择"];
+									}
+									$addCartArr["configoptions"][$config_id] = $configoption[$config_id];
+									continue;
+								}
 								$sub_data = \think\Db::name("product_config_options_sub")->where("config_id", $config_id)->where("hidden", 0)->order("sort_order asc")->order("id", "asc")->find();
 								if (!empty($sub_data)) {
 									$addCartArr["configoptions"][$config_id] = $sub_data["id"];
@@ -366,14 +397,15 @@ class Shop
 		$addCartArr["hostid"] = $hostid;
 		return ["status" => "success", "data" => $addCartArr];
 	}
-	public function addProduct($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid, $checkuot = 0)
+	public function addProduct($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid, $checkuot = 0, $supplierVersion = null)
 	{
 		$cartLock = $this->acquireMutationLock();
 		if ($cartLock === false) {
 			return ["status" => "error", "msg" => "购物车正在处理中，请稍后重试"];
 		}
-		$res = $this->checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid);
+		$res = $this->checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid, $supplierVersion);
 		if ($res["status"] == "error") {
+			$this->completeMutation($cartLock);
 			return $res;
 		}
 		$addCartArr = $res["data"];
@@ -381,6 +413,7 @@ class Shop
 		$cart_data["products"][] = $addCartArr;
 		$limit = self::validateCartProductLimits($cart_data);
 		if ($limit["status"] !== "success") {
+			$this->completeMutation($cartLock);
 			return $limit;
 		}
 		$cart_data = $limit["data"];
@@ -442,7 +475,7 @@ class Shop
 		$cart_data = $this->cart_data;
 		return $cart_data["products"][$i];
 	}
-	public function editProduct($i, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid)
+	public function editProduct($i, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid, $supplierVersion = null)
 	{
 		$cartLock = $this->acquireMutationLock();
 		if ($cartLock === false) {
@@ -454,14 +487,16 @@ class Shop
 		if (empty($pid)) {
 			return ["status" => "error", "msg" => "产品不存在"];
 		}
-		$res = $this->checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid);
+		$res = $this->checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid, $supplierVersion);
 		if ($res["status"] == "error") {
+			$this->completeMutation($cartLock);
 			return $res;
 		}
 		$editCartArr = $res["data"];
 		$cart_data["products"][$i] = $editCartArr;
 		$limit = self::validateCartProductLimits($cart_data);
 		if ($limit["status"] !== "success") {
+			$this->completeMutation($cartLock);
 			return $limit;
 		}
 		$cart_data = $limit["data"];
@@ -665,7 +700,7 @@ class Shop
 				$host = $v["host"] ?? "";
 				$password = $v["password"] ?? "";
 				$hostid = $v["hostid"] ?? 0;
-				$res = $this->checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid);
+					$res = $this->checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid, $v["supplier_version"] ?? null, false);
 				if ($res["status"] == "error") {
 					continue;
 				}
@@ -948,7 +983,7 @@ class Shop
 				$host = $v["host"] ?? "";
 				$password = $v["password"] ?? "";
 				$hostid = $v["hostid"] ?? 0;
-				$res = $this->checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid);
+					$res = $this->checkProductToArr($pid, $billingcycle, $serverid, $configoption, $customfield, $currencyid, $qty, $os, $host, $password, $hostid, $v["supplier_version"] ?? null, false);
 				if ($res["status"] == "error") {
 					continue;
 				}
@@ -1653,6 +1688,42 @@ class Shop
 		}
 		return $addCartArr["configoptions"] ?: [];
 	}
+	public function validateSupplierConfigSelections($pid, $configoption)
+	{
+		$product_type = \think\Db::name("products")->where("id", intval($pid))->value("api_type");
+		if ($product_type !== "zjmf_api") {
+			return ["status" => "success"];
+		}
+		if (!is_array($configoption)) {
+			return ["status" => "error", "msg" => "商品配置已更新，请刷新后重新选择"];
+		}
+		$options = \think\Db::name("product_config_options")
+			->alias("options")
+			->field("options.id,options.option_type")
+			->leftJoin("product_config_links links", "links.gid=options.gid")
+			->where("links.pid", intval($pid))
+			->select()
+			->toArray();
+		$options = array_column($options, null, "id");
+		foreach ($configoption as $config_id => $value) {
+			$config_id = intval($config_id);
+			if (!isset($options[$config_id])) {
+				return ["status" => "error", "msg" => "商品配置已更新，请刷新后重新选择"];
+			}
+			if (judgeQuantity($options[$config_id]["option_type"]) || $value === "" || $value === null) {
+				continue;
+			}
+			$exists = \think\Db::name("product_config_options_sub")
+				->where("config_id", $config_id)
+				->where("id", intval($value))
+				->where("hidden", 0)
+				->find();
+			if (empty($exists)) {
+				return ["status" => "error", "msg" => "商品配置已更新，请刷新后重新选择"];
+			}
+		}
+		return ["status" => "success"];
+	}
 }
 
 class ShopDatabaseLock
@@ -1664,7 +1735,6 @@ class ShopDatabaseLock
 	{
 		$this->name = $name;
 	}
-
 	public static function acquire($name, $timeout)
 	{
 		$rows = \think\Db::query("SELECT GET_LOCK(?, ?) AS `acquired`", [$name, intval($timeout)]);

@@ -7,14 +7,18 @@ class SyncProduct extends \app\queue\common\JobCommon
 	public function fire(\think\queue\Job $job, $data)
 	{
 		$pid = intval($data["pid"] ?? 0);
-		$released = false;
+		$token = (string) ($data["token"] ?? "");
+		$logic = new \app\common\logic\Product();
+		if ($pid <= 0 || $token === "" || !$logic->beginCartProductSync($pid, $token)) {
+			$job->delete();
+			return;
+		}
 		try {
 			$result = $this->handle($data);
 			if (($result["status"] ?? 400) != 200) {
 				throw new \RuntimeException((string) ($result["msg"] ?? "供应商同步失败"));
 			}
-			cache("cart_product_sync_success_" . $pid, 1, 15);
-			cache("cart_product_sync_failure_" . $pid, null);
+			$logic->completeCartProductSync($pid, $token, true);
 			$job->delete();
 		} catch (\Throwable $e) {
 			try {
@@ -22,16 +26,14 @@ class SyncProduct extends \app\queue\common\JobCommon
 			} catch (\Throwable $logError) {
 			}
 			if ($pid > 0 && $job->attempts() < 2) {
-				cache("cart_product_sync_queued_" . $pid, 1, 120);
-				$job->release(15);
-				$released = true;
+				if ($logic->markCartProductSyncQueued($pid, $token)) {
+					$job->release(15);
+				} else {
+					$job->delete();
+				}
 			} else {
-				cache("cart_product_sync_failure_" . $pid, 1, 60);
+				$logic->completeCartProductSync($pid, $token, false);
 				$job->delete();
-			}
-		} finally {
-			if (!$released && $pid > 0) {
-				cache("cart_product_sync_queued_" . $pid, null);
 			}
 		}
 	}

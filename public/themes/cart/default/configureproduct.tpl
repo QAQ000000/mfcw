@@ -175,6 +175,7 @@
 
 
 						<input type="hidden" name="pid" value="{$CartConfig.product.id}" />
+						<input type="hidden" name="supplier_version" value="{$CartConfig.product.supplier_version|default=''}" />
 						<input type="hidden" name="currencyid" value="{$CartConfig.dafault_currencyid}" />
 						<input name="qty" type="hidden" value="1" />
 						{if(isset($addParam.promocode))}
