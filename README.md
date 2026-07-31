@@ -13,7 +13,8 @@ v10 主机的官方 3.7.6 实例迁移，且不引入 v10 或 P3 插件功能。
 4. 更新根目录 `version`、`public/upgrade` 和
    `public/themes/cart/default/viewcart.tpl`，并复制发布包中的整个 `bin/` 与
    `deploy/queue/` 目录；确认 `bin/install-queue-service` 和
-   `bin/zjmf-queue-worker` 保留可执行权限。保留实例自己的 `public/plugins`、
+   `bin/zjmf-queue-worker` 保留可执行权限，同时确认
+   `bin/zjmf-queue-bootstrap.php` 已复制。保留实例自己的 `public/plugins`、
    `public/upload`、`uploads`、`downloads` 和自定义主题。
 5. 在站点根目录执行 `php public/upgrade/upgrade.php --run`。不要使用后台自动升级页
    或 Web SQL 升级入口。3.7.6 会选择幂等的 `public/upgrade/3.7.7.sql`，该迁移
@@ -24,14 +25,15 @@ v10 主机的官方 3.7.6 实例迁移，且不引入 v10 或 P3 插件功能。
    ```sh
    ./bin/install-queue-service \
      --root /www/wwwroot/实例目录 \
-     --php /usr/bin/php \
+     --php /www/server/php/72/bin/php \
      --user www
    ```
 
-   示例中的 `www` 是宝塔默认站点用户；其他环境必须替换为站点目录的实际所有者，
-   不要照抄用户名称。安装器会自动检测服务管理器；在宝塔安全策略阻止 systemd
-   直接切换到 Web 用户时，会自动使用 `runuser` 兼容模式。完成后再恢复 Cron。
-   详细说明见 `deploy/queue/README.md`。
+   上述命令可直接用于 PHP 7.2 的宝塔默认环境。若 PHP 安装位置或项目目录不同，
+   必须替换成实际路径；`--user` 必须填写站点目录的实际所有者，不要照抄用户
+   名称。安装器会自动检测服务管理器；在宝塔安全策略阻止 systemd 直接切换到
+   Web 用户时，会自动使用 `runuser` 兼容模式。完成后再恢复 Cron。详细说明见
+   `deploy/queue/README.md`。
 
 升级前必须确认没有活动的 v10 主机；如仍有 v10 商品或供应商接口，应先下架，
 并清空遗留购物车数据。
