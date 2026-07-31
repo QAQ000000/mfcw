@@ -604,6 +604,8 @@ class Product
 		if (isset($param["page_type"])) {
 			if ($param["page_type"] == "set_config_page") {
 				$log = "购物车页面";
+			} elseif ($param["page_type"] == "cart_queue") {
+				$log = "购物车异步刷新";
 			} elseif ($param["page_type"] == "edit_product") {
 				$log = "保存商品";
 			}
@@ -676,32 +678,45 @@ class Product
 		if ($pid <= 0) {
 			return ["status" => 400, "msg" => "商品不存在"];
 		}
+		if ($this->queueProductSyncForCart($pid)) {
+			return ["status" => 200, "msg" => "商品数据将在后台刷新"];
+		}
+		return ["status" => 200, "msg" => "后台刷新暂不可用，已使用本地数据"];
+	}
+	public function queueProductSyncForCart($pid)
+	{
+		$pid = intval($pid);
+		if ($pid <= 0) {
+			return false;
+		}
+		$queued_key = "cart_product_sync_queued_" . $pid;
 		$success_key = "cart_product_sync_success_" . $pid;
 		$failure_key = "cart_product_sync_failure_" . $pid;
-		if (cache($success_key) || cache($failure_key)) {
-			return ["status" => 200, "msg" => "使用最近同步的商品数据"];
+		if (cache($queued_key) || cache($success_key) || cache($failure_key)) {
+			return true;
 		}
-		$timeout = max(1, floatval($param["timeout"] ?? 1));
-		$lock = $this->acquireCartSyncLock($pid, intval(ceil($timeout)) + 10);
+		$lock = $this->acquireFileLock("cart-sync-enqueue", "product-" . $pid, 10, true);
 		if ($lock === false) {
-			return ["status" => 200, "msg" => "商品数据正在同步，已使用本地数据"];
+			return true;
 		}
 		try {
-			if (cache($success_key) || cache($failure_key)) {
-				return ["status" => 200, "msg" => "使用最近同步的商品数据"];
+			if (cache($queued_key) || cache($success_key) || cache($failure_key)) {
+				return true;
 			}
-			$result = $this->syncProductUnlocked($param);
-			if (($result["status"] ?? 400) == 200) {
-				cache($success_key, 1, 15);
-			} else {
-				cache($failure_key, 1, 60);
+			cache($queued_key, 1, 120);
+			try {
+				\app\queue\job\SyncProduct::push(["pid" => $pid]);
+				return true;
+			} catch (\Throwable $e) {
+				cache($queued_key, null);
+				try {
+					\think\facade\Log::record("Cart product sync enqueue failed for product #{$pid}: " . $e->getMessage(), "error");
+				} catch (\Throwable $logError) {
+				}
+				return false;
 			}
-			return $result;
-		} catch (\Throwable $e) {
-			cache($failure_key, 1, 60);
-			return ["status" => 400, "msg" => "供应商同步失败，已使用本地数据"];
 		} finally {
-			$this->releaseCartSyncLock($lock);
+			$this->releaseFileLock($lock);
 		}
 	}
 	protected function acquireCartSyncLock($pid, $lease)

@@ -1217,11 +1217,9 @@ class CartController extends CommonController
 		}
 		if ($pro["api_type"] == "zjmf_api") {
 			$zjmf_finance_api_id = $pro["zjmf_api_id"];
-			$upstream_pid = $pro["upstream_pid"];
 			$api = \think\Db::name("zjmf_finance_api")->where("id", $zjmf_finance_api_id)->find();
 			if ($api["auto_update"] == 1) {
-				$param = ["pid" => $pid, "zjmf_finance_api_id" => $zjmf_finance_api_id, "upstream_pid" => $upstream_pid, "timeout" => 1, "page_type" => "set_config_page", "upstream_price_type" => $pro["upstream_price_type"], "upstream_price_value" => $pro["upstream_price_value"]];
-				(new \app\common\logic\Product())->syncProductForCart($param);
+				(new \app\common\logic\Product())->queueProductSyncForCart($pid);
 			}
 		}
 		$servers = \think\Db::name("products")->alias("p")->field("s.id,s.name,s.noc")->leftJoin("server_groups sg", "sg.id = p.server_group")->leftJoin("servers s", "s.gid = sg.id")->where("p.id", $pid)->select()->toArray();
