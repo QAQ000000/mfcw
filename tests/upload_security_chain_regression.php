@@ -55,6 +55,16 @@ try {
 
 	$gifPayload = base64_decode("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==")
 		. base64_decode("PD9waHAgZWNobyAxOyA/Pg==");
+	$jpegImage = imagecreatetruecolor(2, 3);
+	imagefill($jpegImage, 0, 0, imagecolorallocate($jpegImage, 20, 40, 60));
+	ob_start();
+	imagejpeg($jpegImage, null, 90);
+	$jpegContent = ob_get_clean();
+	imagedestroy($jpegImage);
+	$tiff = "II" . pack("v", 42) . pack("V", 8) . pack("v", 1)
+		. pack("v", 0x0112) . pack("v", 3) . pack("V", 1) . pack("v", 6) . "\x00\x00" . pack("V", 0);
+	$exifPayload = "Exif\x00\x00" . $tiff;
+	$orientedJpeg = substr($jpegContent, 0, 2) . "\xFF\xE1" . pack("n", strlen($exifPayload) + 2) . $exifPayload . substr($jpegContent, 2);
 	$upload = new \app\common\logic\Upload($targetDirectory);
 	$results = [
 		"uploadHandles1" => $upload->uploadHandles1($makeFile("shell.php", base64_decode("PD9waHAgZWNobyAxOyA/Pg==")), true),
@@ -63,6 +73,7 @@ try {
 		"regularArchive" => $upload->uploadHandles($makeFile("files.zip", "PK\x03\x04regular archive"), true),
 		"uploadHandle" => $upload->uploadHandle($makeFile("payload.gif", $gifPayload), false),
 		"uploadMultiHandle" => $upload->uploadMultiHandle([$makeFile("payload.gif", $gifPayload)]),
+		"orientedJpeg" => $upload->uploadHandle($makeFile("phone.jpg", $orientedJpeg), false),
 	];
 
 	assertUploadChain($results["uploadHandles1"]["status"] !== 200, "uploadHandles1 must reject executable attachments");
@@ -70,12 +81,15 @@ try {
 	assertUploadChain($results["regularText"]["status"] === 200, "uploadHandles1 must keep regular text attachments working");
 	assertUploadChain($results["regularArchive"]["status"] === 200, "uploadHandles must keep regular archives working");
 	foreach (["uploadHandle", "uploadMultiHandle"] as $method) {
-		assertUploadChain($results[$method]["status"] === 200, $method . " must accept a decodable GIF for sanitization");
+		assertUploadChain($results[$method]["status"] === 200, $method . " must accept a valid GIF with a safe filename");
 		$saveName = explode(",", $results[$method]["savename"])[0];
 		$savedPath = $targetDirectory . $saveName;
-		assertUploadChain(is_file($savedPath), $method . " must save the sanitized image");
-		assertUploadChain(substr(file_get_contents($savedPath), -1) === ";", $method . " must remove bytes after the GIF trailer");
+		assertUploadChain(is_file($savedPath), $method . " must save the image");
+		assertUploadChain(file_get_contents($savedPath) === $gifPayload, $method . " must not decode or rewrite image bytes");
 	}
+	assertUploadChain($results["orientedJpeg"]["status"] === 200, "JPEG files with EXIF orientation must remain supported");
+	$orientedPath = $targetDirectory . $results["orientedJpeg"]["savename"];
+	assertUploadChain(file_get_contents($orientedPath) === $orientedJpeg, "JPEG orientation metadata must remain byte-for-byte intact");
 } finally {
 	removeUploadChainDirectory($temporaryRoot);
 }

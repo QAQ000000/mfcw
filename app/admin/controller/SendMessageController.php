@@ -114,13 +114,6 @@ class SendMessageController extends AdminBaseController
 				}
 				$info = $file->validate(["size" => 5242880])->move($this->attachments_path);
 				if ($info) {
-					if (!\app\common\logic\Upload::sanitizeStoredImage($info->getPathname())) {
-						@unlink($info->getPathname());
-						foreach (isset($filename) ? $filename : [] as $savedFile) {
-							@unlink($this->attachments_path . $savedFile);
-						}
-						return ["status" => 406, "msg" => "图片处理失败"];
-					}
 					$filename[] = $info->getFilename();
 				} else {
 					foreach (isset($filename) ? $filename : [] as $val) {

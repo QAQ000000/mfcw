@@ -167,7 +167,11 @@ class Download
 			$result["msg"] = "uploadfile不能为空";
 			return $result;
 		}
-		$name = iconv("utf-8", "gbk", $file->getInfo()["name"]);
+		$originalName = $file->getInfo()["name"];
+		if (!\app\common\logic\Upload::isUploadContentSafe($file->getRealPath(), $file->getMime(), true, $originalName)) {
+			return ["status" => 400, "msg" => "不支持的附件内容"];
+		}
+		$name = iconv("utf-8", "gbk", $originalName);
 		$info = $file->validate($validate)->move(UPLOAD_PATH_DWN . "support/", $name);
 		if ($info) {
 			$filename = $info->getFilename();

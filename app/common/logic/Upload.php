@@ -76,10 +76,6 @@ class Upload
 		}
 		if ($info) {
 			$savename = $info->getSaveName();
-			if (!self::sanitizeStoredImage($info->getPathname())) {
-				@unlink($info->getPathname());
-				return ["status" => 400, "msg" => "图片处理失败"];
-			}
 			$re["status"] = 200;
 			$re["savename"] = $savename;
 			$re["origin_name"] = $originalName;
@@ -162,104 +158,6 @@ class Upload
 		}
 		return $type === IMAGETYPE_PNG && $extension === "png";
 	}
-	public static function sanitizeStoredImage($path)
-	{
-		$imageInfo = @getimagesize($path);
-		if ($imageInfo === false) {
-			return true;
-		}
-		if (!isset($imageInfo[2]) || !in_array($imageInfo[2], [IMAGETYPE_GIF, IMAGETYPE_JPEG, IMAGETYPE_PNG], true)) {
-			return false;
-		}
-		$tempPath = @tempnam(dirname($path), ".upload-");
-		if ($tempPath === false) {
-			return false;
-		}
-		$success = false;
-		try {
-			if ($imageInfo[2] === IMAGETYPE_GIF) {
-				$success = self::sanitizeGif($path, $tempPath);
-			} else {
-				$content = @file_get_contents($path);
-				$image = $content === false ? false : @imagecreatefromstring($content);
-				if ($image !== false) {
-					if ($imageInfo[2] === IMAGETYPE_PNG) {
-						imagealphablending($image, false);
-						imagesavealpha($image, true);
-						$success = @imagepng($image, $tempPath, 6);
-					} else {
-						$success = @imagejpeg($image, $tempPath, 90);
-					}
-					imagedestroy($image);
-				}
-			}
-			if (!$success || @getimagesize($tempPath) === false) {
-				return false;
-			}
-			@chmod($tempPath, fileperms($path) & 0777);
-			$success = @rename($tempPath, $path);
-			return $success;
-		} catch (\Throwable $e) {
-			return false;
-		} finally {
-			if (is_file($tempPath)) {
-				@unlink($tempPath);
-			}
-		}
-	}
-	private static function sanitizeGif($sourcePath, $targetPath)
-	{
-		$content = @file_get_contents($sourcePath);
-		if ($content === false) {
-			return false;
-		}
-		$transparentColor = [-1, -1, -1];
-		$sourceImage = @imagecreatefromstring($content);
-		if ($sourceImage !== false) {
-			$transparentIndex = imagecolortransparent($sourceImage);
-			if ($transparentIndex >= 0 && $transparentIndex < imagecolorstotal($sourceImage)) {
-				$color = imagecolorsforindex($sourceImage, $transparentIndex);
-				$transparentColor = [$color["red"], $color["green"], $color["blue"]];
-			}
-			imagedestroy($sourceImage);
-		}
-		$decoder = new \think\image\gif\Decoder($content);
-		$frames = $decoder->getFrames();
-		$delays = $decoder->getDelays();
-		if (empty($frames)) {
-			return false;
-		}
-		$cleanFrames = [];
-		foreach ($frames as $index => $frame) {
-			$image = @imagecreatefromstring($frame);
-			if ($image === false) {
-				return false;
-			}
-			if ($transparentColor[0] >= 0) {
-				$transparentIndex = imagecolorexact($image, $transparentColor[0], $transparentColor[1], $transparentColor[2]);
-				if ($transparentIndex < 0) {
-					$transparentIndex = imagecolorallocate($image, $transparentColor[0], $transparentColor[1], $transparentColor[2]);
-				}
-				imagecolortransparent($image, $transparentIndex);
-			}
-			ob_start();
-			$written = @imagegif($image);
-			$cleanFrame = ob_get_clean();
-			imagedestroy($image);
-			if (!$written || $cleanFrame === false || $cleanFrame === "") {
-				return false;
-			}
-			$cleanFrames[] = $cleanFrame;
-			if (!isset($delays[$index])) {
-				$delays[$index] = 0;
-			}
-		}
-		if (count($cleanFrames) === 1) {
-			return file_put_contents($targetPath, $cleanFrames[0]) !== false;
-		}
-		$encoder = new \think\image\gif\Encoder($cleanFrames, $delays, 0, 2, $transparentColor[0], $transparentColor[1], $transparentColor[2], "bin");
-		return file_put_contents($targetPath, $encoder->getAnimation()) !== false;
-	}
 	/**
 	 * 单文件上传
 	 * @param $file :文件
@@ -314,10 +212,6 @@ class Upload
 		}
 		if ($info) {
 			$savename = $info->getSaveName();
-			if (!self::sanitizeStoredImage($info->getPathname())) {
-				@unlink($info->getPathname());
-				return ["status" => 400, "msg" => "图片处理失败"];
-			}
 			$re["status"] = 200;
 			$re["savename"] = $savename;
 			$re["origin_name"] = $originalName;
@@ -381,10 +275,6 @@ class Upload
 		}
 		if ($info) {
 			$savename = $info->getSaveName();
-			if (!self::sanitizeStoredImage($info->getPathname())) {
-				@unlink($info->getPathname());
-				return ["status" => 400, "msg" => "图片处理失败"];
-			}
 			$re["status"] = 200;
 			$re["savename"] = $savename;
 			$re["origin_name"] = $originalName;
@@ -440,11 +330,6 @@ class Upload
 				$info = $file->rule("uniqid")->move($this->fileSave, md5(uniqid()) . time());
 			}
 			if ($info) {
-				if (!self::sanitizeStoredImage($info->getPathname())) {
-					@unlink($info->getPathname());
-					self::deleteSavedFiles($this->fileSave, isset($re["savename"]) ? $re["savename"] : "");
-					return ["status" => 400, "msg" => "图片处理失败"];
-				}
 				if (!isset($savename)) {
 					$savename = $info->getSaveName();
 				} else {

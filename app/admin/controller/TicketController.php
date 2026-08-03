@@ -1301,13 +1301,6 @@ class TicketController extends GetUserController
 				return mt_rand(1000, 9999) . "_" . md5(microtime(true));
 			})->move(TICKET_DOWN_PATH);
 			if ($info) {
-				if (!\app\common\logic\Upload::sanitizeStoredImage($info->getPathname())) {
-					@unlink($info->getPathname());
-					foreach ($data as $savedFile) {
-						@unlink(TICKET_DOWN_PATH . $savedFile);
-					}
-					return ["status" => 406, "msg" => "图片处理失败"];
-				}
 				$data[] = $info->getFilename();
 			} else {
 				foreach ($data as $val) {

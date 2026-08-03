@@ -74,8 +74,6 @@ mkdir($uploadTarget, 0755, true);
 mkdir($supportRoot, 0755, true);
 define("UPLOAD_DEFAULT", $uploadSource . DIRECTORY_SEPARATOR);
 define("UPLOAD_PATH_DWN", $downloadRoot . DIRECTORY_SEPARATOR);
-require_once $root . "/vendor/topthink/think-image/src/image/gif/Decoder.php";
-require_once $root . "/vendor/topthink/think-image/src/image/gif/Encoder.php";
 require_once $root . "/app/common/logic/Upload.php";
 require_once $root . "/app/common/logic/Download.php";
 
@@ -87,63 +85,21 @@ $contentCheck->setAccessible(true);
 $cleanGif = base64_decode("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==");
 $cleanGifPath = $tempRoot . DIRECTORY_SEPARATOR . "clean.gif";
 $phpGifPath = $tempRoot . DIRECTORY_SEPARATOR . "php.gif";
-$shortTagGifPath = $tempRoot . DIRECTORY_SEPARATOR . "short-tag.gif";
 $textPath = $tempRoot . DIRECTORY_SEPARATOR . "plain.txt";
 $htmlPath = $tempRoot . DIRECTORY_SEPARATOR . "html.txt";
 $archivePath = $tempRoot . DIRECTORY_SEPARATOR . "archive.zip";
-$jpegPath = $tempRoot . DIRECTORY_SEPARATOR . "metadata.jpg";
-$pngPath = $tempRoot . DIRECTORY_SEPARATOR . "metadata.png";
-$opaqueGifPath = $tempRoot . DIRECTORY_SEPARATOR . "opaque.gif";
-$transparentGifPath = $tempRoot . DIRECTORY_SEPARATOR . "transparent.gif";
 file_put_contents($cleanGifPath, $cleanGif);
 file_put_contents($phpGifPath, $cleanGif . "<?php system(\$_GET['cmd']); ?>");
-file_put_contents($shortTagGifPath, $cleanGif . "<? system(\$_GET['cmd']); ?>");
 file_put_contents($textPath, "plain attachment");
 file_put_contents($htmlPath, "<script>alert('xss')</script>");
 file_put_contents($archivePath, "PK\x03\x04regular archive fixture");
-$fixtureImage = imagecreatetruecolor(2, 2);
-imagefill($fixtureImage, 0, 0, imagecolorallocate($fixtureImage, 12, 34, 56));
-imagejpeg($fixtureImage, $jpegPath, 90);
-imagepng($fixtureImage, $pngPath, 6);
-imagedestroy($fixtureImage);
-file_put_contents($jpegPath, "UPLOAD-TRAILER", FILE_APPEND);
-file_put_contents($pngPath, "UPLOAD-TRAILER", FILE_APPEND);
-$opaqueGif = imagecreate(2, 2);
-imagefill($opaqueGif, 0, 0, imagecolorallocate($opaqueGif, 0, 0, 0));
-imagegif($opaqueGif, $opaqueGifPath);
-imagedestroy($opaqueGif);
-$transparentGif = imagecreate(2, 2);
-$transparentIndex = imagecolorallocate($transparentGif, 12, 34, 56);
-imagefill($transparentGif, 0, 0, $transparentIndex);
-imagecolortransparent($transparentGif, $transparentIndex);
-imagegif($transparentGif, $transparentGifPath);
-imagedestroy($transparentGif);
 assertSecurityHardening($contentCheck->invoke($uploadLogic, $cleanGifPath, "image/gif", false, "clean.gif") === true, "clean GIF uploads must remain supported");
-assertSecurityHardening($contentCheck->invoke($uploadLogic, $phpGifPath, "image/gif", false, "payload.gif") === true, "valid GIF data with a trailing payload must reach the image sanitizer");
+assertSecurityHardening($contentCheck->invoke($uploadLogic, $phpGifPath, "image/gif", false, "payload.gif") === true, "safe image names must not be rejected because of compressed or trailing bytes");
 assertSecurityHardening($contentCheck->invoke($uploadLogic, $phpGifPath, "image/gif", false, "avatar.php.jpg") === false, "dangerous compound image names must be rejected");
 assertSecurityHardening($contentCheck->invoke($uploadLogic, $textPath, "text/plain", true, "shell.php") === false, "script attachment names must be rejected");
 assertSecurityHardening($contentCheck->invoke($uploadLogic, $textPath, "text/plain", true, "notes.txt") === true, "plain text attachments must remain supported");
 assertSecurityHardening($contentCheck->invoke($uploadLogic, $archivePath, "application/zip", true, "files.zip") === true, "regular archive attachments must remain supported");
 assertSecurityHardening($contentCheck->invoke($uploadLogic, $htmlPath, "text/html", true, "page.txt") === false, "HTML-like attachments must be rejected");
-
-$sanitizeImage = new ReflectionMethod($uploadLogic, "sanitizeStoredImage");
-$sanitizeImage->setAccessible(true);
-assertSecurityHardening($sanitizeImage->invoke($uploadLogic, $phpGifPath) === true, "GIF payloads must be sanitized successfully");
-assertSecurityHardening(substr(file_get_contents($phpGifPath), -1) === ";", "sanitized GIF files must end at the GIF trailer");
-assertSecurityHardening($sanitizeImage->invoke($uploadLogic, $shortTagGifPath) === true, "short-tag GIF payloads must be sanitized successfully");
-assertSecurityHardening(substr(file_get_contents($shortTagGifPath), -1) === ";", "short-tag payload bytes must not remain after the GIF trailer");
-assertSecurityHardening($sanitizeImage->invoke($uploadLogic, $jpegPath) === true, "JPEG metadata and trailing data must be sanitized successfully");
-assertSecurityHardening(substr(file_get_contents($jpegPath), -2) === "\xFF\xD9", "sanitized JPEG files must end at the JPEG trailer");
-assertSecurityHardening($sanitizeImage->invoke($uploadLogic, $pngPath) === true, "PNG metadata and trailing data must be sanitized successfully");
-assertSecurityHardening(substr(file_get_contents($pngPath), -12) === "\x00\x00\x00\x00IEND\xAE\x42\x60\x82", "sanitized PNG files must end at the IEND chunk");
-assertSecurityHardening($sanitizeImage->invoke($uploadLogic, $opaqueGifPath) === true, "opaque GIF files must sanitize successfully");
-$opaqueGif = imagecreatefromgif($opaqueGifPath);
-assertSecurityHardening(imagecolortransparent($opaqueGif) < 0, "opaque black GIF pixels must not become transparent");
-imagedestroy($opaqueGif);
-assertSecurityHardening($sanitizeImage->invoke($uploadLogic, $transparentGifPath) === true, "transparent GIF files must sanitize successfully");
-$transparentGif = imagecreatefromgif($transparentGifPath);
-assertSecurityHardening(imagecolortransparent($transparentGif) >= 0, "GIF transparency must survive sanitization");
-imagedestroy($transparentGif);
 
 $coincidentalMarkerImage = null;
 $imageFiles = [];
@@ -165,33 +121,16 @@ foreach ($iterator as $imageFile) {
 }
 assertSecurityHardening(count($imageFiles) > 600, "all structurally recognized images in the public corpus must be covered");
 assertSecurityHardening($coincidentalMarkerImage !== null, "the corpus must include a valid image with coincidental script-marker bytes");
-$realImageCopy = $tempRoot . DIRECTORY_SEPARATOR . "real-image." . pathinfo($coincidentalMarkerImage, PATHINFO_EXTENSION);
-copy($coincidentalMarkerImage, $realImageCopy);
-assertSecurityHardening($sanitizeImage->invoke($uploadLogic, $realImageCopy) === true, "a real compressed image with coincidental marker bytes must re-encode successfully");
-assertSecurityHardening(getimagesize($realImageCopy) !== false, "the re-encoded repository image must remain decodable");
-
-$animationFrames = [];
-foreach ([[255, 0, 0], [0, 0, 255]] as $color) {
-	$frameImage = imagecreatetruecolor(2, 2);
-	imagefill($frameImage, 0, 0, imagecolorallocate($frameImage, $color[0], $color[1], $color[2]));
-	ob_start();
-	imagegif($frameImage);
-	$animationFrames[] = ob_get_clean();
-	imagedestroy($frameImage);
-}
-$animationPath = $tempRoot . DIRECTORY_SEPARATOR . "animated.gif";
-$animationEncoder = new \think\image\gif\Encoder($animationFrames, [5, 5], 0, 2, 0, 0, 0, "bin");
-file_put_contents($animationPath, $animationEncoder->getAnimation() . "<?php echo 1; ?>");
-assertSecurityHardening($sanitizeImage->invoke($uploadLogic, $animationPath) === true, "animated GIFs must be sanitized successfully");
-$sanitizedAnimation = new \think\image\gif\Decoder(file_get_contents($animationPath));
-assertSecurityHardening(count($sanitizedAnimation->getFrames()) === 2, "animated GIF frame count must survive sanitization");
 assertSecurityHardening(strpos($emailTemplateValidate, "text/html") === false, "attachment MIME rules must not allow inline HTML");
 
 foreach (["uploadHandle", "uploadHandles1", "uploadHandles", "uploadMultiHandle"] as $uploadMethod) {
 	$methodSource = securityMethodSource($upload, $uploadMethod);
 	assertSecurityHardening(strpos($methodSource, "isUploadContentSafe") !== false, $uploadMethod . " must run shared pre-storage validation");
-	assertSecurityHardening(strpos($methodSource, "sanitizeStoredImage") !== false, $uploadMethod . " must sanitize images after storage");
 }
+assertSecurityHardening(strpos($upload, "sanitizeStoredImage") === false, "uploads must not decode and rewrite images after storage");
+assertSecurityHardening(strpos($upload, "imagecreatefrom") === false && strpos($upload, "\\think\\image\\gif\\Decoder") === false, "upload validation must not allocate decoded image buffers");
+$legacyDownloadUpload = securityMethodSource($download, "upload");
+assertSecurityHardening(strpos($legacyDownloadUpload, "Upload::isUploadContentSafe") !== false, "legacy product downloads must use shared pre-storage validation");
 $moveResult = $uploadLogic->moveTo($temporaryName, $uploadTarget);
 assertSecurityHardening($moveResult === $temporaryName, "a generated temporary upload name must remain usable");
 assertSecurityHardening(is_file($uploadTarget . DIRECTORY_SEPARATOR . $temporaryName), "a valid temporary upload must move into the target directory");
@@ -211,16 +150,9 @@ if (function_exists("symlink") && @symlink($outsideFile, $linkPath)) {
 unlink($uploadTarget . DIRECTORY_SEPARATOR . $temporaryName);
 unlink($cleanGifPath);
 unlink($phpGifPath);
-unlink($shortTagGifPath);
 unlink($textPath);
 unlink($htmlPath);
 unlink($archivePath);
-unlink($jpegPath);
-unlink($pngPath);
-unlink($opaqueGifPath);
-unlink($transparentGifPath);
-unlink($realImageCopy);
-unlink($animationPath);
 unlink($supportRoot . DIRECTORY_SEPARATOR . $supportName);
 unlink($outsideFile);
 rmdir($uploadSource);
