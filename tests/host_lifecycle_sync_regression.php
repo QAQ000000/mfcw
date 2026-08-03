@@ -41,8 +41,10 @@ assertHostLifecycleSync(strpos($hostApi, 'a.serverid') !== false, "create synchr
 assertHostLifecycleSync(strpos($hostApi, '$sms_params = ["product_name"') !== false, "welcome notifications must not overwrite the authenticated synchronization payload");
 assertHostLifecycleSync(strpos($hostApi, 'if (!empty($stream_info["downstream_url"]))') !== false && strpos($hostApi, 'pushHostInfo($id, "suspendreason");') !== false, "received lifecycle changes and reasons must continue through reseller chains");
 assertHostLifecycleSync(strpos($pushLogic, 'insertGetId($retry)') !== false && strpos($pushLogic, 'where("post_data", $encoded_post_data)->delete()') !== false, "lifecycle pushes must be persisted before delivery and removed only after the same payload succeeds");
+assertHostLifecycleSync(strpos($pushLogic, 'acquireHostPushLock($id)') !== false && strpos($pushLogic, 'finally {') !== false && strpos($pushLogic, 'releaseHostPushLock($lock_name);') !== false, "live lifecycle pushes must serialize each host through a database lock");
 assertHostLifecycleSync(strpos($cron, 'field("id,host_id,url,post_data,num")') !== false, "the retry worker must load the row id and attempt count it updates");
-assertHostLifecycleSync(strpos($cron, 'where("post_data", $v["post_data"])') !== false, "a slow retry must not acknowledge a newer lifecycle payload");
+assertHostLifecycleSync(strpos($cron, 'where("post_data", $current["post_data"])') !== false, "a slow retry must not acknowledge a newer lifecycle payload");
+assertHostLifecycleSync(strpos($cron, 'acquireHostPushLock($v["host_id"])') !== false && strpos($cron, '$current = \\think\\Db::name("zjmf_pushhost")') !== false, "retry delivery must take the same host lock and reload the queued payload before sending");
 assertHostLifecycleSync(strpos($hostLogic, 'mergeUpstreamLifecycleState') !== false && strpos($hostLogic, '$update["suspendreason"] = "";') !== false, "manual synchronization must reconcile upstream lifecycle state and reason");
 assertHostLifecycleSync(strpos($hostLogic, 'in_array($localStatus, $terminalStatuses, true)') !== false, "manual synchronization must not revive a locally terminal service");
 assertHostLifecycleSync(strpos($hostLogic, '$status === "Active" && !in_array($localStatus, ["Pending", "Active"], true)') !== false, "manual synchronization must not clear a local suspension");
@@ -51,6 +53,33 @@ assertHostLifecycleSync(strpos($terminateMethod, '$module_res = resourceCurl($ho
 assertHostLifecycleSync(strpos($adminServices, 'pushHostInfo($id, "domainstatus,suspendreason");') !== false, "database-only administrator suspension must still notify downstream resellers");
 assertHostLifecycleSync(strpos($homeProvision, 'pushHostInfo($id);') !== false, "custom supplier actions that change status must notify downstream resellers");
 assertHostLifecycleSync(strpos($adminOrders, 'whereNotIn("domainstatus", ["Pending", "Cancelled"])') !== false, "order cancellation must not silently cancel provisioned services");
+assertHostLifecycleSync(strpos($cron, 'array_column($hostids, "rel_id")') === false, "automatic cancellation must use the integer host id list directly");
+assertHostLifecycleSync(strpos($cron, 'where("domainstatus", "Pending")->lock(true)') !== false, "automatic cancellation must lock and recheck pending hosts inside the transaction");
+assertHostLifecycleSync(strpos($cron, 'foreach ($cancelled_host_ids as $host_id)') !== false, "automatic cancellation must push only hosts actually transitioned to cancelled");
+assertHostLifecycleSync(strpos($cron, 'array_count_values($cancelled_productids)') !== false, "automatic cancellation must return inventory only for products actually cancelled");
+
+$pushStart = strpos($pushLogic, 'function pushHostInfo(');
+$pushEnd = strpos($pushLogic, 'function createSign(', $pushStart);
+$pushMethod = substr($pushLogic, $pushStart, $pushEnd - $pushStart);
+$pushAcquire = strpos($pushMethod, 'acquireHostPushLock($id)');
+$pushRead = strpos($pushMethod, '->where("id", $id)->find()');
+$pushSend = strpos($pushMethod, 'commonCurl($url, $post_data, 30)');
+$pushRelease = strrpos($pushMethod, 'releaseHostPushLock($lock_name);');
+assertHostLifecycleSync($pushAcquire < $pushRead && $pushRead < $pushSend && $pushSend < $pushRelease, "live pushes must read and send the latest snapshot while holding the host lock");
+
+$retryStart = strpos($cron, 'public function hostInfo()');
+$retryEnd = strpos($cron, '$host = \\think\\Db::name("host")', $retryStart);
+$retryMethod = substr($cron, $retryStart, $retryEnd - $retryStart);
+$retryAcquire = strpos($retryMethod, 'acquireHostPushLock($v["host_id"])');
+$retryRead = strpos($retryMethod, '$current = \\think\\Db::name("zjmf_pushhost")');
+$retrySend = strpos($retryMethod, 'commonCurl($current["url"], $post_data, 30)');
+$retryRelease = strrpos($retryMethod, 'releaseHostPushLock($lock_name);');
+assertHostLifecycleSync($retryAcquire < $retryRead && $retryRead < $retrySend && $retrySend < $retryRelease, "retry delivery must reload and send the queued payload while holding the same host lock");
+
+$cancelUpdate = strpos($cron, '$updated = \\think\\Db::name("host")');
+$cancelCommit = strpos($cron, '\\think\\Db::commit();', $cancelUpdate);
+$cancelPush = strpos($cron, 'foreach ($cancelled_host_ids as $host_id)', $cancelCommit);
+assertHostLifecycleSync($cancelUpdate !== false && $cancelCommit !== false && $cancelPush !== false && $cancelUpdate < $cancelCommit && $cancelCommit < $cancelPush, "automatic cancellation must push only successful transitions after commit");
 
 require_once $root . "/app/common/logic/Host.php";
 $hostLogicInstance = new \app\common\logic\Host();

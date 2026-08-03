@@ -113,22 +113,56 @@ function pushTicketReply($id)
 		\think\Db::name("ticket_reply")->where("id", $id)->update(["is_deliver" => 1]);
 	}
 }
+function acquireHostPushLock($id, $timeout = 40)
+{
+	$lock_name = "zjmf_host_push_" . intval($id);
+	try {
+		$rows = \think\Db::query("SELECT GET_LOCK(?, ?) AS `acquired`", [$lock_name, intval($timeout)]);
+		if (intval($rows[0]["acquired"] ?? 0) === 1) {
+			return $lock_name;
+		}
+	} catch (\Throwable $e) {
+		error_log("Failed to acquire host push lock: " . $e->getMessage());
+	}
+	return "";
+}
+function releaseHostPushLock($lock_name)
+{
+	if ($lock_name === "") {
+		return;
+	}
+	try {
+		\think\Db::query("SELECT RELEASE_LOCK(?)", [$lock_name]);
+	} catch (\Throwable $e) {
+		error_log("Failed to release host push lock: " . $e->getMessage());
+	}
+}
 function pushHostInfo($id, $other_field = "", $type = "")
 {
-	$field = "id,productid,domain,username,password,dedicatedip,assignedips,port,os,os_url,stream_info,nextduedate,domainstatus";
-	if (!empty($other_field)) {
-		$field .= "," . $other_field;
+	$lock_name = acquireHostPushLock($id);
+	if ($lock_name === "") {
+		return ["status" => 500, "msg" => "产品状态推送繁忙，请稍后重试"];
 	}
-	$host = \think\Db::name("host")->field($field)->where("id", $id)->find();
-	$stream_info = json_decode($host["stream_info"], true);
-	$pid = $host["productid"];
-	$pushhost = [];
-	if ($type == "create") {
-		$pushhost = \think\Db::name("zjmf_pushhost")->field("id")->where("host_id", $id)->find();
-	}
-	unset($host["stream_info"]);
-	unset($host["productid"]);
-	if (!empty($stream_info["downstream_url"]) && !empty($stream_info["downstream_token"]) && empty($pushhost)) {
+	try {
+		$field = "id,productid,domain,username,password,dedicatedip,assignedips,port,os,os_url,stream_info,nextduedate,domainstatus";
+		if (!empty($other_field)) {
+			$field .= "," . $other_field;
+		}
+		$host = \think\Db::name("host")->field($field)->where("id", $id)->find();
+		if (empty($host)) {
+			return ["status" => 404, "msg" => "产品不存在"];
+		}
+		$stream_info = json_decode($host["stream_info"], true) ?: [];
+		$pid = $host["productid"];
+		$pushhost = [];
+		if ($type == "create") {
+			$pushhost = \think\Db::name("zjmf_pushhost")->field("id")->where("host_id", $id)->find();
+		}
+		unset($host["stream_info"]);
+		unset($host["productid"]);
+		if (empty($stream_info["downstream_url"]) || empty($stream_info["downstream_token"]) || !empty($pushhost)) {
+			return null;
+		}
 		$host["host_id"] = $host["id"];
 		$host["id"] = $stream_info["downstream_id"];
 		$host["password"] = cmf_decrypt($host["password"]) ?: "";
@@ -174,6 +208,8 @@ function pushHostInfo($id, $other_field = "", $type = "")
 			\think\Db::name("zjmf_pushhost")->where("id", $retry_id)->where("post_data", $encoded_post_data)->delete();
 		}
 		return $res;
+	} finally {
+		releaseHostPushLock($lock_name);
 	}
 }
 function createSign($params, $token)

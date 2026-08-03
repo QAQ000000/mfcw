@@ -263,24 +263,36 @@ class Cron extends \think\console\Command
 	{
 		$pushhost = \think\Db::name("zjmf_pushhost")->field("id,host_id,url,post_data,num")->where("status", 0)->where("num", "<", 5)->order("id", "asc")->select()->toArray();
 		foreach ($pushhost as $v) {
-			$post_data = json_decode($v["post_data"], true) ?: [];
-			try {
-				$res = commonCurl($v["url"], $post_data, 30);
-			} catch (\Throwable $e) {
-				$res = ["status" => 500];
+			$lock_name = acquireHostPushLock($v["host_id"]);
+			if ($lock_name === "") {
+				continue;
 			}
-			$is_create = ($post_data["type"] ?? "") == "create";
-			$is_success = ($res["status"] ?? 0) == 200 || $is_create && ($res["status"] ?? 0) == 400;
-			if ($is_success) {
-				if ($is_create) {
-					$update = ["status" => 1, "time" => time(), "num" => $v["num"] + 1];
-					\think\Db::name("zjmf_pushhost")->where("id", $v["id"])->where("post_data", $v["post_data"])->update($update);
-				} else {
-					\think\Db::name("zjmf_pushhost")->where("id", $v["id"])->where("post_data", $v["post_data"])->delete();
+			try {
+				$current = \think\Db::name("zjmf_pushhost")->field("id,host_id,url,post_data,num")->where("id", $v["id"])->where("status", 0)->find();
+				if (empty($current)) {
+					continue;
 				}
-			} else {
-				$update = ["status" => 0, "time" => time(), "num" => $v["num"] + 1];
-				\think\Db::name("zjmf_pushhost")->where("id", $v["id"])->where("post_data", $v["post_data"])->update($update);
+				$post_data = json_decode($current["post_data"], true) ?: [];
+				try {
+					$res = commonCurl($current["url"], $post_data, 30);
+				} catch (\Throwable $e) {
+					$res = ["status" => 500];
+				}
+				$is_create = ($post_data["type"] ?? "") == "create";
+				$is_success = ($res["status"] ?? 0) == 200 || $is_create && ($res["status"] ?? 0) == 400;
+				if ($is_success) {
+					if ($is_create) {
+						$update = ["status" => 1, "time" => time(), "num" => $current["num"] + 1];
+						\think\Db::name("zjmf_pushhost")->where("id", $current["id"])->where("post_data", $current["post_data"])->update($update);
+					} else {
+						\think\Db::name("zjmf_pushhost")->where("id", $current["id"])->where("post_data", $current["post_data"])->delete();
+					}
+				} else {
+					$update = ["status" => 0, "time" => time(), "num" => $current["num"] + 1];
+					\think\Db::name("zjmf_pushhost")->where("id", $current["id"])->where("post_data", $current["post_data"])->update($update);
+				}
+			} finally {
+				releaseHostPushLock($lock_name);
 			}
 		}
 		$host = \think\Db::name("host")->alias("a")->field("a.id,a.uid,a.productid,a.domainstatus,a.regdate,a.dcimid,b.welcome_email,b.type,a.billingcycle,b.pay_type,b.name,a.nextduedate,a.billingcycle,a.dedicatedip,a.domain,a.username,a.password,a.os,a.assignedips,a.create_time,a.stream_info,b.api_type,b.zjmf_api_id,b.upstream_pid,b.server_group")->leftJoin("products b", "a.productid=b.id")->where("a.domainstatus", "=", "Pending")->where("b.api_type", "=", "resource")->where("a.regdate", "<", time() - 300)->select()->toArray();
@@ -709,6 +721,8 @@ class Cron extends \think\console\Command
 					}
 				} else {
 					$cancelled = false;
+					$cancelled_host_ids = [];
+					$cancelled_productids = [];
 					\think\Db::startTrans();
 					try {
 						\think\Db::name("orders")->whereIn("id", $ids)->where("delete_time", 0)->update(["status" => "Cancelled", "update_time" => time()]);
@@ -718,16 +732,25 @@ class Cron extends \think\console\Command
 								\think\Db::name("invoices")->where("delete_time", 0)->where("id", $invoiceid)->update(["status" => "Cancelled"]);
 							}
 						}
-						\think\Db::name("host")->whereIn("id", array_column($hostids, "rel_id"))->update(["domainstatus" => "Cancelled"]);
-						\think\Db::name("products")->whereIn("id", $productids)->setInc("qty", 1);
+						$pending_hosts = \think\Db::name("host")->field("id,productid")->whereIn("id", $hostids)->where("domainstatus", "Pending")->lock(true)->select()->toArray();
+						foreach ($pending_hosts as $pending_host) {
+							$updated = \think\Db::name("host")->where("id", $pending_host["id"])->where("domainstatus", "Pending")->update(["domainstatus" => "Cancelled"]);
+							if ($updated) {
+								$cancelled_host_ids[] = intval($pending_host["id"]);
+								$cancelled_productids[] = intval($pending_host["productid"]);
+							}
+						}
+						foreach (array_count_values($cancelled_productids) as $product_id => $quantity) {
+							\think\Db::name("products")->where("id", $product_id)->setInc("qty", $quantity);
+						}
 						\think\Db::commit();
 						$cancelled = true;
 						} catch (\Exception $e) {
 							\think\Db::rollback();
 						}
 						if ($cancelled) {
-							(new \app\common\logic\Product())->refreshInventoryCache($productids, "cron unpaid order cancel commit");
-							foreach (array_unique(array_filter(array_column($hostids, "rel_id"))) as $host_id) {
+							(new \app\common\logic\Product())->refreshInventoryCache($cancelled_productids, "cron unpaid order cancel commit");
+							foreach ($cancelled_host_ids as $host_id) {
 								pushHostInfo($host_id);
 							}
 						}
