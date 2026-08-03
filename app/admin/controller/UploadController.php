@@ -20,18 +20,20 @@ class UploadController extends AdminBaseController
 	 */
 	public function upload()
 	{
-		$validate = ["size" => 2097152, "ext" => "jpg,jpeg,png,gif"];
 		$file = request()->file("image");
-		$info = $file->validate($validate)->rule(function () {
-			return mt_rand(1000, 9999) . "_" . md5(microtime(true));
-		})->move(config("attachment"));
-		if ($info) {
+		if (!$file) {
+			return jsonrule(["status" => 406, "msg" => "上传失败"]);
+		}
+		$file->validate(["size" => 2097152, "ext" => "jpg,jpeg,png,gif"]);
+		$upload = new \app\common\logic\Upload(config("attachment"));
+		$result = $upload->uploadHandle($file, false, false);
+		if (isset($result["status"]) && $result["status"] === 200) {
 			$res["status"] = 200;
 			$res["msg"] = "上传成功";
-			$res["data"] = request()->domain() . request()->rootUrl() . config("attachment_url") . $info->getFilename();
+			$res["data"] = request()->domain() . request()->rootUrl() . config("attachment_url") . $result["savename"];
 		} else {
 			$res["status"] = 406;
-			$res["msg"] = "上传失败";
+			$res["msg"] = isset($result["msg"]) ? $result["msg"] : "上传失败";
 		}
 		return jsonrule($res);
 	}

@@ -598,8 +598,27 @@ class EmailTemplateController extends AdminBaseController
 				return $re;
 			}
 			$originalName = $file->getInfo("name");
+			if (!\app\common\logic\Upload::isUploadContentSafe($file->getRealPath(), $file->getMime(), true, $originalName)) {
+				foreach (isset($savename) ? explode(",", $savename) : [] as $savedFile) {
+					@unlink($this->imagesave . $savedFile);
+				}
+				unset($re["savename"]);
+				$re["status"] = 400;
+				$re["msg"] = "不支持的附件内容";
+				return $re;
+			}
 			$info = $file->rule("uniqid")->move($this->imagesave, md5(uniqid()) . time() . $this->split . $originalName);
 			if ($info) {
+				if (!\app\common\logic\Upload::sanitizeStoredImage($info->getPathname())) {
+					@unlink($info->getPathname());
+					foreach (isset($savename) ? explode(",", $savename) : [] as $savedFile) {
+						@unlink($this->imagesave . $savedFile);
+					}
+					unset($re["savename"]);
+					$re["status"] = 400;
+					$re["msg"] = "图片处理失败";
+					return $re;
+				}
 				if (!isset($savename)) {
 					$savename = $info->getSaveName();
 				} else {
@@ -608,8 +627,13 @@ class EmailTemplateController extends AdminBaseController
 				$re["status"] = 200;
 				$re["savename"] = $savename;
 			} else {
+				foreach (isset($savename) ? explode(",", $savename) : [] as $savedFile) {
+					@unlink($this->imagesave . $savedFile);
+				}
 				$re["status"] = 400;
 				$re["msg"] = $file->getError();
+				unset($re["savename"]);
+				return $re;
 			}
 		}
 		return $re;

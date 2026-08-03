@@ -63,12 +63,12 @@ class Upload
 		}
 		$uploadPath = $file->getRealPath();
 		$uploadMime = $file->getMime();
-		if (!self::isUploadContentSafe($uploadPath, $uploadMime, $is_file)) {
+		$originalName = $file->getInfo("name");
+		if (!self::isUploadContentSafe($uploadPath, $uploadMime, $is_file, $originalName)) {
 			$re["status"] = 400;
 			$re["msg"] = "不支持的附件内容";
 			return $re;
 		}
-		$originalName = $file->getInfo("name");
 		if ($origin) {
 			$info = $file->rule("uniqid")->move($this->fileSave, md5(uniqid()) . time() . $split . $originalName);
 		} else {
@@ -76,6 +76,10 @@ class Upload
 		}
 		if ($info) {
 			$savename = $info->getSaveName();
+			if (!self::sanitizeStoredImage($info->getPathname())) {
+				@unlink($info->getPathname());
+				return ["status" => 400, "msg" => "图片处理失败"];
+			}
 			$re["status"] = 200;
 			$re["savename"] = $savename;
 			$re["origin_name"] = $originalName;
@@ -85,45 +89,176 @@ class Upload
 		}
 		return $re;
 	}
-	public static function isUploadContentSafe($path, $mime, $is_file)
+	public static function isUploadContentSafe($path, $mime, $is_file, $originalName = "")
 	{
 		if (!is_string($path) || !is_file($path) || !is_readable($path)) {
 			return false;
 		}
-		$mime = strtolower(trim((string) $mime));
-		if ($mime === "text/html" || (!$is_file && strpos($mime, "image/") !== 0)) {
+		if ($originalName !== "" && !self::isUploadNameSafe($originalName)) {
 			return false;
 		}
-		if (strpos($mime, "image/") === 0) {
-			$imageInfo = @getimagesize($path);
-			if ($imageInfo === false || self::containsExecutableImagePayload($path)) {
+		$reportedMime = strtolower(trim((string) $mime));
+		$detectedMime = self::detectMime($path);
+		$blockedMimes = [
+			"text/html",
+			"application/xhtml+xml",
+			"application/x-httpd-php",
+			"application/x-php",
+			"text/x-php",
+			"text/x-shellscript",
+			"application/x-executable",
+		];
+		if (in_array($reportedMime, $blockedMimes, true) || in_array($detectedMime, $blockedMimes, true)) {
+			return false;
+		}
+		$imageInfo = @getimagesize($path);
+		$isImage = is_array($imageInfo) && isset($imageInfo[2]) && in_array($imageInfo[2], [IMAGETYPE_GIF, IMAGETYPE_JPEG, IMAGETYPE_PNG], true);
+		if (!$is_file && !$isImage) {
+			return false;
+		}
+		if ($originalName !== "") {
+			$extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+			$imageExtensions = ["gif", "jpg", "jpeg", "png"];
+			if ($isImage !== in_array($extension, $imageExtensions, true)) {
+				return false;
+			}
+			if ($isImage && !self::imageExtensionMatchesType($extension, $imageInfo[2])) {
 				return false;
 			}
 		}
 		return true;
 	}
-	private static function containsExecutableImagePayload($path)
+	private static function isUploadNameSafe($name)
 	{
-		$handle = @fopen($path, "rb");
-		if ($handle === false) {
+		if (!is_string($name) || $name === "" || strpos($name, "\0") !== false || basename($name) !== $name || strpos($name, "/") !== false || strpos($name, "\\") !== false) {
+			return false;
+		}
+		$lowerName = strtolower($name);
+		if ($lowerName === ".htaccess" || $lowerName === ".user.ini") {
+			return false;
+		}
+		return !preg_match('/\.(?:php\d*|phtml?|pht|phar|inc|asp|aspx|asa|cer|jsp|jspx|jsw|jsv|cfm|cfc|cgi|pl|py|sh|bash|zsh|exe|dll|com|bat|cmd|msi)(?:\.|$)/i', $name);
+	}
+	private static function detectMime($path)
+	{
+		if (!function_exists("finfo_open")) {
+			return "";
+		}
+		$finfo = @finfo_open(FILEINFO_MIME_TYPE);
+		if ($finfo === false) {
+			return "";
+		}
+		$mime = @finfo_file($finfo, $path);
+		finfo_close($finfo);
+		return strtolower(trim((string) $mime));
+	}
+	private static function imageExtensionMatchesType($extension, $type)
+	{
+		if ($type === IMAGETYPE_GIF) {
+			return $extension === "gif";
+		}
+		if ($type === IMAGETYPE_JPEG) {
+			return in_array($extension, ["jpg", "jpeg"], true);
+		}
+		return $type === IMAGETYPE_PNG && $extension === "png";
+	}
+	public static function sanitizeStoredImage($path)
+	{
+		$imageInfo = @getimagesize($path);
+		if ($imageInfo === false) {
 			return true;
 		}
-		$tail = "";
-		while (!feof($handle)) {
-			$chunk = fread($handle, 8192);
-			if ($chunk === false) {
-				fclose($handle);
-				return true;
-			}
-			$content = $tail . $chunk;
-			if (preg_match('/<\?|<%|<script\b|<jsp:/i', $content)) {
-				fclose($handle);
-				return true;
-			}
-			$tail = substr($content, -32);
+		if (!isset($imageInfo[2]) || !in_array($imageInfo[2], [IMAGETYPE_GIF, IMAGETYPE_JPEG, IMAGETYPE_PNG], true)) {
+			return false;
 		}
-		fclose($handle);
-		return false;
+		$tempPath = @tempnam(dirname($path), ".upload-");
+		if ($tempPath === false) {
+			return false;
+		}
+		$success = false;
+		try {
+			if ($imageInfo[2] === IMAGETYPE_GIF) {
+				$success = self::sanitizeGif($path, $tempPath);
+			} else {
+				$content = @file_get_contents($path);
+				$image = $content === false ? false : @imagecreatefromstring($content);
+				if ($image !== false) {
+					if ($imageInfo[2] === IMAGETYPE_PNG) {
+						imagealphablending($image, false);
+						imagesavealpha($image, true);
+						$success = @imagepng($image, $tempPath, 6);
+					} else {
+						$success = @imagejpeg($image, $tempPath, 90);
+					}
+					imagedestroy($image);
+				}
+			}
+			if (!$success || @getimagesize($tempPath) === false) {
+				return false;
+			}
+			@chmod($tempPath, fileperms($path) & 0777);
+			$success = @rename($tempPath, $path);
+			return $success;
+		} catch (\Throwable $e) {
+			return false;
+		} finally {
+			if (is_file($tempPath)) {
+				@unlink($tempPath);
+			}
+		}
+	}
+	private static function sanitizeGif($sourcePath, $targetPath)
+	{
+		$content = @file_get_contents($sourcePath);
+		if ($content === false) {
+			return false;
+		}
+		$transparentColor = [-1, -1, -1];
+		$sourceImage = @imagecreatefromstring($content);
+		if ($sourceImage !== false) {
+			$transparentIndex = imagecolortransparent($sourceImage);
+			if ($transparentIndex >= 0 && $transparentIndex < imagecolorstotal($sourceImage)) {
+				$color = imagecolorsforindex($sourceImage, $transparentIndex);
+				$transparentColor = [$color["red"], $color["green"], $color["blue"]];
+			}
+			imagedestroy($sourceImage);
+		}
+		$decoder = new \think\image\gif\Decoder($content);
+		$frames = $decoder->getFrames();
+		$delays = $decoder->getDelays();
+		if (empty($frames)) {
+			return false;
+		}
+		$cleanFrames = [];
+		foreach ($frames as $index => $frame) {
+			$image = @imagecreatefromstring($frame);
+			if ($image === false) {
+				return false;
+			}
+			if ($transparentColor[0] >= 0) {
+				$transparentIndex = imagecolorexact($image, $transparentColor[0], $transparentColor[1], $transparentColor[2]);
+				if ($transparentIndex < 0) {
+					$transparentIndex = imagecolorallocate($image, $transparentColor[0], $transparentColor[1], $transparentColor[2]);
+				}
+				imagecolortransparent($image, $transparentIndex);
+			}
+			ob_start();
+			$written = @imagegif($image);
+			$cleanFrame = ob_get_clean();
+			imagedestroy($image);
+			if (!$written || $cleanFrame === false || $cleanFrame === "") {
+				return false;
+			}
+			$cleanFrames[] = $cleanFrame;
+			if (!isset($delays[$index])) {
+				$delays[$index] = 0;
+			}
+		}
+		if (count($cleanFrames) === 1) {
+			return file_put_contents($targetPath, $cleanFrames[0]) !== false;
+		}
+		$encoder = new \think\image\gif\Encoder($cleanFrames, $delays, 0, 2, $transparentColor[0], $transparentColor[1], $transparentColor[2], "bin");
+		return file_put_contents($targetPath, $encoder->getAnimation()) !== false;
 	}
 	/**
 	 * 单文件上传
@@ -169,6 +304,9 @@ class Upload
 			}
 		}
 		$originalName = $file->getInfo("name");
+		if (!self::isUploadContentSafe($file->getRealPath(), $file->getMime(), $is_file, $originalName)) {
+			return ["status" => 400, "msg" => "不支持的附件内容"];
+		}
 		if ($origin) {
 			$info = $file->rule("uniqid")->move($this->fileSave, md5(uniqid()) . time() . $split . $originalName);
 		} else {
@@ -176,6 +314,10 @@ class Upload
 		}
 		if ($info) {
 			$savename = $info->getSaveName();
+			if (!self::sanitizeStoredImage($info->getPathname())) {
+				@unlink($info->getPathname());
+				return ["status" => 400, "msg" => "图片处理失败"];
+			}
 			$re["status"] = 200;
 			$re["savename"] = $savename;
 			$re["origin_name"] = $originalName;
@@ -229,6 +371,9 @@ class Upload
 			}
 		}
 		$originalName = $file->getInfo("name");
+		if (!self::isUploadContentSafe($file->getRealPath(), $file->getMime(), $is_file, $originalName)) {
+			return ["status" => 400, "msg" => "不支持的附件内容"];
+		}
 		if ($origin) {
 			$info = $file->rule("uniqid")->move($this->fileSave, md5(uniqid()) . time() . $split . $originalName);
 		} else {
@@ -236,6 +381,10 @@ class Upload
 		}
 		if ($info) {
 			$savename = $info->getSaveName();
+			if (!self::sanitizeStoredImage($info->getPathname())) {
+				@unlink($info->getPathname());
+				return ["status" => 400, "msg" => "图片处理失败"];
+			}
 			$re["status"] = 200;
 			$re["savename"] = $savename;
 			$re["origin_name"] = $originalName;
@@ -280,13 +429,22 @@ class Upload
 				}
 				return $re;
 			}
+			$originalName = $file->getInfo("name");
+			if (!self::isUploadContentSafe($file->getRealPath(), $file->getMime(), true, $originalName)) {
+				self::deleteSavedFiles($this->fileSave, isset($re["savename"]) ? $re["savename"] : "");
+				return ["status" => 400, "msg" => "不支持的附件内容"];
+			}
 			if ($origin) {
-				$originalName = $file->getInfo("name");
 				$info = $file->rule("uniqid")->move($this->fileSave, md5(uniqid()) . time() . $split . $originalName);
 			} else {
 				$info = $file->rule("uniqid")->move($this->fileSave, md5(uniqid()) . time());
 			}
 			if ($info) {
+				if (!self::sanitizeStoredImage($info->getPathname())) {
+					@unlink($info->getPathname());
+					self::deleteSavedFiles($this->fileSave, isset($re["savename"]) ? $re["savename"] : "");
+					return ["status" => 400, "msg" => "图片处理失败"];
+				}
 				if (!isset($savename)) {
 					$savename = $info->getSaveName();
 				} else {
@@ -297,9 +455,21 @@ class Upload
 			} else {
 				$re["status"] = 400;
 				$re["msg"] = $file->getError();
+				self::deleteSavedFiles($this->fileSave, isset($re["savename"]) ? $re["savename"] : "");
+				unset($re["savename"]);
+				return $re;
 			}
 		}
 		return $re;
+	}
+	private static function deleteSavedFiles($directory, $saveNames)
+	{
+		foreach (array_filter(explode(",", (string) $saveNames)) as $saveName) {
+			$path = rtrim($directory, "/\\") . DIRECTORY_SEPARATOR . $saveName;
+			if (is_file($path)) {
+				@unlink($path);
+			}
+		}
 	}
 	/**
 	 * 时间 2020/4/27 15:42

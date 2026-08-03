@@ -459,8 +459,27 @@ class KnowledgeBaseController extends AdminBaseController
 					return $re;
 				}
 				$originalName = $file->getInfo("name");
+				if (!\app\common\logic\Upload::isUploadContentSafe($file->getRealPath(), $file->getMime(), false, $originalName)) {
+					foreach (isset($savename) ? explode(",", $savename) : [] as $savedFile) {
+						@unlink($this->imagesave . $savedFile);
+					}
+					unset($re["savename"], $re["savename_array"]);
+					$re["status"] = 400;
+					$re["msg"] = "不支持的附件内容";
+					return $re;
+				}
 				$info = $file->rule("uniqid")->move($this->imagesave, md5(uniqid()) . time() . $originalName);
 				if ($info) {
+					if (!\app\common\logic\Upload::sanitizeStoredImage($info->getPathname())) {
+						@unlink($info->getPathname());
+						foreach (isset($savename) ? explode(",", $savename) : [] as $savedFile) {
+							@unlink($this->imagesave . $savedFile);
+						}
+						unset($re["savename"], $re["savename_array"]);
+						$re["status"] = 400;
+						$re["msg"] = "图片处理失败";
+						return $re;
+					}
 					if (!isset($savename)) {
 						$savename = $info->getSaveName();
 					} else {
@@ -472,8 +491,13 @@ class KnowledgeBaseController extends AdminBaseController
 					$re["msg"] = lang("SUCCESS MESSAGE");
 					$re["savename"] = $savename;
 				} else {
+					foreach (isset($savename) ? explode(",", $savename) : [] as $savedFile) {
+						@unlink($this->imagesave . $savedFile);
+					}
 					$re["status"] = 400;
 					$re["msg"] = $file->getError();
+					unset($re["savename"], $re["savename_array"]);
+					return $re;
 				}
 			}
 			if (isset($re["savename"])) {

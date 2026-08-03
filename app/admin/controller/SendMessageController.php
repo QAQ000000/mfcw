@@ -106,11 +106,24 @@ class SendMessageController extends AdminBaseController
 		$files = request()->file("attachments");
 		if (!empty($files)) {
 			foreach ($files as $file) {
+				if (!\app\common\logic\Upload::isUploadContentSafe($file->getRealPath(), $file->getMime(), true, $file->getInfo("name"))) {
+					foreach (isset($filename) ? $filename : [] as $savedFile) {
+						@unlink($this->attachments_path . $savedFile);
+					}
+					return ["status" => 406, "msg" => "不支持的附件内容"];
+				}
 				$info = $file->validate(["size" => 5242880])->move($this->attachments_path);
 				if ($info) {
+					if (!\app\common\logic\Upload::sanitizeStoredImage($info->getPathname())) {
+						@unlink($info->getPathname());
+						foreach (isset($filename) ? $filename : [] as $savedFile) {
+							@unlink($this->attachments_path . $savedFile);
+						}
+						return ["status" => 406, "msg" => "图片处理失败"];
+					}
 					$filename[] = $info->getFilename();
 				} else {
-					foreach ($filename as $val) {
+					foreach (isset($filename) ? $filename : [] as $val) {
 						@unlink($this->attachments_path . $val);
 					}
 					$result["status"] = 406;

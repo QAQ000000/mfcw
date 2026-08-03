@@ -12,6 +12,6 @@ class EmailTemplateValidate extends \think\Validate
 		if (!is_object($file) || !method_exists($file, "getRealPath") || !method_exists($file, "getMime")) {
 			return false;
 		}
-		return \app\common\logic\Upload::isUploadContentSafe($file->getRealPath(), $file->getMime(), true) ?: "不支持的附件内容";
+		return \app\common\logic\Upload::isUploadContentSafe($file->getRealPath(), $file->getMime(), true, $file->getInfo("name")) ?: "不支持的附件内容";
 	}
 }

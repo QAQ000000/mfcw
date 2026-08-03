@@ -914,13 +914,26 @@ class TicketController extends CommonController
 		$data = [];
 		$files = request()->file("attachment");
 		foreach ($files as $file) {
+			if (!\app\common\logic\Upload::isUploadContentSafe($file->getRealPath(), $file->getMime(), true, $file->getInfo("name"))) {
+				foreach ($data as $savedFile) {
+					@unlink(TICKET_DOWN_PATH . $savedFile);
+				}
+				return ["status" => 406, "msg" => "不支持的附件内容"];
+			}
 			$info = $file->validate($validate)->rule(function () {
 				return mt_rand(1000, 9999) . "_" . md5(microtime(true));
 			})->move(TICKET_DOWN_PATH);
 			if ($info) {
+				if (!\app\common\logic\Upload::sanitizeStoredImage($info->getPathname())) {
+					@unlink($info->getPathname());
+					foreach ($data as $savedFile) {
+						@unlink(TICKET_DOWN_PATH . $savedFile);
+					}
+					return ["status" => 406, "msg" => "图片处理失败"];
+				}
 				$data[] = $info->getFilename();
 			} else {
-				foreach ($data["attachment"] as $val) {
+				foreach ($data as $val) {
 					@unlink(TICKET_DOWN_PATH . $val);
 				}
 				$result["status"] = 406;
