@@ -61,6 +61,13 @@ class Upload
 				return $re;
 			}
 		}
+		$uploadPath = $file->getRealPath();
+		$uploadMime = $file->getMime();
+		if (!self::isUploadContentSafe($uploadPath, $uploadMime, $is_file)) {
+			$re["status"] = 400;
+			$re["msg"] = "不支持的附件内容";
+			return $re;
+		}
 		$originalName = $file->getInfo("name");
 		if ($origin) {
 			$info = $file->rule("uniqid")->move($this->fileSave, md5(uniqid()) . time() . $split . $originalName);
@@ -77,6 +84,46 @@ class Upload
 			$re["msg"] = $file->getError();
 		}
 		return $re;
+	}
+	public static function isUploadContentSafe($path, $mime, $is_file)
+	{
+		if (!is_string($path) || !is_file($path) || !is_readable($path)) {
+			return false;
+		}
+		$mime = strtolower(trim((string) $mime));
+		if ($mime === "text/html" || (!$is_file && strpos($mime, "image/") !== 0)) {
+			return false;
+		}
+		if (strpos($mime, "image/") === 0) {
+			$imageInfo = @getimagesize($path);
+			if ($imageInfo === false || self::containsExecutableImagePayload($path)) {
+				return false;
+			}
+		}
+		return true;
+	}
+	private static function containsExecutableImagePayload($path)
+	{
+		$handle = @fopen($path, "rb");
+		if ($handle === false) {
+			return true;
+		}
+		$tail = "";
+		while (!feof($handle)) {
+			$chunk = fread($handle, 8192);
+			if ($chunk === false) {
+				fclose($handle);
+				return true;
+			}
+			$content = $tail . $chunk;
+			if (preg_match('/<\?|<%|<script\b|<jsp:/i', $content)) {
+				fclose($handle);
+				return true;
+			}
+			$tail = substr($content, -32);
+		}
+		fclose($handle);
+		return false;
 	}
 	/**
 	 * 单文件上传
