@@ -83,14 +83,7 @@ class Cron extends \think\console\Command
 	public function dailyCronJob($config)
 	{
 		$this_time = time();
-		if (($this_time - $config["last_dailycron_invocation_time"] ?? 0) < 86400 || date("G") < $config["cron_day_start_time"]) {
-			return null;
-		}
-		$time_day = strtotime(date("Y-m-d")) + intval($config["cron_day_start_time"]) * 60 * 60;
-		if (time() < $time_day || time() > $time_day + 900) {
-			return null;
-		}
-		if (date("Y-m-d", $config["last_dailycron_invocation_time"]) == date("Y-m-d")) {
+		if (!$this->shouldRunDailyCron($config["last_dailycron_invocation_time"] ?? 0, $config["cron_day_start_time"], $this_time)) {
 			return null;
 		}
 		hook("before_daily_cron");
@@ -123,6 +116,20 @@ class Cron extends \think\console\Command
 				}
 			}
 		}
+	}
+	protected function shouldRunDailyCron($last_invocation_time, $start_hour, $current_time)
+	{
+		$current_time = intval($current_time);
+		$today = date("Y-m-d", $current_time);
+		$time_day = strtotime($today) + intval($start_hour) * 60 * 60;
+		if ($current_time < $time_day) {
+			return false;
+		}
+		$last_invocation_time = intval($last_invocation_time);
+		if ($last_invocation_time > 0 && date("Y-m-d", $last_invocation_time) === $today) {
+			return false;
+		}
+		return true;
 	}
 	public function onlyOnce()
 	{
