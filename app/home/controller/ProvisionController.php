@@ -727,6 +727,7 @@ class ProvisionController extends CommonController
 				if ($host["api_type"] == "zjmf_api") {
 					if ($result["data"]["host"]) {
 						\think\Db::name("host")->where("id", $id)->update(["domainstatus" => $result["data"]["host"]["domainstatus"]]);
+						pushHostInfo($id);
 					}
 				}
 				$result["status"] = 200;

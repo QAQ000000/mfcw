@@ -173,28 +173,32 @@ class HostController
 	public function syncInfo()
 	{
 		$params = input("post.");
-		$id = \intval($params["id"]);
+		$id = \intval($params["id"] ?? 0);
 		if (empty($params["signature"])) {
 			$result["status"] = 400;
 			$result["msg"] = "签名错误";
 			return json($result);
 		}
-		$host = \think\Db::name("host")->alias("a")->field("a.port,a.stream_info")->field("a.id,a.uid,a.productid,a.domainstatus,a.regdate,b.welcome_email,b.type,c.email,a.billingcycle,b.pay_type,b.name,a.nextduedate,a.billingcycle,a.dedicatedip,a.username,a.password,a.os,a.assignedips,a.create_time")->leftJoin("products b", "a.productid=b.id")->leftJoin("clients c", "a.uid=c.id")->where("a.id", $id)->find();
-		$stream_info = json_decode($host["stream_info"], true);
-		$token = $stream_info["token"];
+		$host = \think\Db::name("host")->alias("a")->field("a.port,a.stream_info")->field("a.id,a.uid,a.productid,a.serverid,a.domainstatus,a.regdate,b.welcome_email,b.type,c.email,a.billingcycle,b.pay_type,b.name,a.nextduedate,a.billingcycle,a.domain,a.dedicatedip,a.username,a.password,a.os,a.os_url,a.assignedips,a.suspendreason,a.create_time")->leftJoin("products b", "a.productid=b.id")->leftJoin("clients c", "a.uid=c.id")->where("a.id", $id)->find();
+		if (empty($host)) {
+			return json(["status" => 400, "msg" => "产品不存在"]);
+		}
+		$stream_info = json_decode($host["stream_info"], true) ?: [];
+		$token = $stream_info["token"] ?? "";
 		if (empty($token)) {
 			$result["status"] = 400;
 			$result["msg"] = "该产品不能使用该接口";
 			return json($result);
 		}
-		$params["password"] = html_entity_decode($params["password"], ENT_QUOTES);
+		$params["password"] = html_entity_decode($params["password"] ?? "", ENT_QUOTES);
 		$params["token"] = $token;
 		if (!validateSign($params, $params["signature"])) {
 			$result["status"] = 400;
 			$result["msg"] = "签名验证失败";
 			return json($result);
 		}
-		$update = ["domain" => $params["domain"], "username" => $params["username"], "password" => cmf_encrypt($params["password"]), "os" => $params["os"], "os_url" => $params["os_url"] ?: "", "dedicatedip" => $params["dedicatedip"], "assignedips" => $params["assignedips"], "port" => \intval($params["port"]), "suspendreason" => $params["suspendreason"]];
+		$sync_type = $params["type"] ?? "";
+		$update = ["domain" => $params["domain"], "username" => $params["username"], "password" => cmf_encrypt($params["password"]), "os" => $params["os"], "os_url" => $params["os_url"] ?: "", "dedicatedip" => $params["dedicatedip"], "assignedips" => $params["assignedips"], "port" => \intval($params["port"]), "suspendreason" => $params["suspendreason"] ?? $host["suspendreason"]];
 		if (!empty($params["nextduedate"])) {
 			$update["nextduedate"] = $params["nextduedate"];
 		}
@@ -205,7 +209,7 @@ class HostController
 			$update["suspendreason"] = $params["suspendreason"];
 		}
 		$r = \think\Db::name("host")->where("id", $id)->update($update);
-		if ($params["type"] == "create") {
+		if ($sync_type == "create") {
 			if ($host["domainstatus"] == "Active") {
 				$result["status"] = 200;
 				$result["msg"] = "更新成功";
@@ -229,15 +233,15 @@ class HostController
 					} else {
 						$time = date("Y-m-d H:i:s", $host["nextduedate"]);
 					}
-					$params = ["product_name" => $host["name"], "product_mainip" => $host["dedicatedip"], "product_user" => $host["username"], "product_passwd" => cmf_decrypt($host["password"]), "product_dcimbms_os" => $host["os"], "product_addonip" => $host["assignedips"], "product_first_time" => date("Y-m-d H:i:s", $host["create_time"]), "product_end_time" => $time, "product_binlly_cycle" => $billing_cycle[$host["billingcycle"]]];
-					$params["product_mainip"] .= $host["port"] ? ":" . $host["port"] : "";
-					$sms->sendSms($message_template_type[strtolower("Default_Product_Welcome")], $client["phone_code"] . $client["phonenumber"], $params, false, $host["uid"]);
+					$sms_params = ["product_name" => $host["name"], "product_mainip" => $host["dedicatedip"], "product_user" => $host["username"], "product_passwd" => cmf_decrypt($host["password"]), "product_dcimbms_os" => $host["os"], "product_addonip" => $host["assignedips"], "product_first_time" => date("Y-m-d H:i:s", $host["create_time"]), "product_end_time" => $time, "product_binlly_cycle" => $billing_cycle[$host["billingcycle"]]];
+					$sms_params["product_mainip"] .= $host["port"] ? ":" . $host["port"] : "";
+					$sms->sendSms($message_template_type[strtolower("Default_Product_Welcome")], $client["phone_code"] . $client["phonenumber"], $sms_params, false, $host["uid"]);
 				}
 				if ($host["welcome_email"] > 0) {
 					$email = new \app\common\logic\Email();
 					$email->sendEmail($host["welcome_email"], $id, !empty($ip) ? $ip : get_client_ip6());
 				}
-				$description = sprintf("开通host - User ID:%d - Host ID:%d - 服务器模块:%s - 接口:%s - IP:%s - 成功", $host["uid"], $id, $server_groups["name"], $servers["name"], $host["dedicatedip"]);
+				$description = sprintf("开通host - User ID:%d - Host ID:%d - 服务器模块:%s - 接口:%s - IP:%s - 成功", $host["uid"], $id, $server_groups["name"] ?? "", $servers["name"] ?? "", $host["dedicatedip"]);
 				active_log_final(\app\common\logic\ClientActivityLog::markInternal($description, "supplier"), $host["uid"], 2, $id);
 				$data_i["description"] = "订单 - 开通 Host ID:{$data_i["host_id"]}的产品成功";
 				$logic_run_map->saveMap($data_i, 1, 400, 1);
@@ -263,10 +267,10 @@ class HostController
 			$dcim->savePanelPass($id, $host["productid"], $params["ippassword"]);
 		}
 		if (!empty($stream_info["downstream_url"])) {
-			if ($params["type"] == "create" && $params["domainstatus"] == "Active") {
+			if ($sync_type == "create" && $params["domainstatus"] == "Active") {
 				pushHostInfo($id, "domainstatus", "create");
 			} else {
-				pushHostInfo($id);
+				pushHostInfo($id, "suspendreason");
 			}
 		}
 		if ($r) {

@@ -949,6 +949,13 @@ class OrderController extends GetUserController
 		$invoiceids = \think\Db::name("orders")->whereIn("id", $ids)->column("invoiceid");
 		$invoiceidss = \think\Db::name("orders")->field("id,uid")->whereIn("id", $ids)->select();
 		$hostids = \think\Db::name("invoice_items")->field("rel_id,uid,id")->where("type", "host")->where("delete_time", 0)->whereIn("invoice_id", $invoiceids)->select()->toArray();
+		$affected_host_ids = array_values(array_unique(array_filter(array_column($hostids, "rel_id"))));
+		if (!empty($affected_host_ids)) {
+			$active_host_count = \think\Db::name("host")->whereIn("id", $affected_host_ids)->whereNotIn("domainstatus", ["Pending", "Cancelled"])->count();
+			if ($active_host_count > 0) {
+				return jsonrule(["status" => 400, "msg" => "已开通或已暂停产品请使用产品终止功能"]);
+			}
+		}
 		$productids_qty = \think\Db::name("orders")->alias("o")->leftJoin("host h", "o.id = h.orderid")->whereIn("o.id", $ids)->whereIn("o.status", ["Pending", "Active", "Suspend"])->column("h.productid");
 		\think\Db::startTrans();
 		try {
@@ -967,6 +974,9 @@ class OrderController extends GetUserController
 				return jsonrule(["status" => 400, "msg" => lang("取消失败")]);
 			}
 			(new \app\common\logic\Product())->refreshInventoryCache($productids_qty, "admin order cancel commit");
+			foreach ($affected_host_ids as $host_id) {
+				pushHostInfo($host_id);
+			}
 			foreach ($invoiceidss as $ids1) {
 			active_log(sprintf($this->lang["Order_admin_cancel_success"], $ids1["uid"], $ids1["id"]), $ids1["uid"]);
 			active_log(sprintf($this->lang["Order_admin_cancel_success"], $ids1["uid"], $ids1["id"]), $ids1["uid"], "", 2);

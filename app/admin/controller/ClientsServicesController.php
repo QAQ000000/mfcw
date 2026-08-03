@@ -1289,6 +1289,7 @@ class ClientsServicesController extends GetUserController
 			$reason = $arr[$reason_type];
 		}
 		\think\Db::name("host")->where("id", $id)->update(["domainstatus" => "Suspended", "suspendreason" => $reason_type . "-" . $reason, "suspend_time" => time()]);
+		pushHostInfo($id, "domainstatus,suspendreason");
 		return jsonrule(["status" => 200, "msg" => "请求成功"]);
 	}
 	/**

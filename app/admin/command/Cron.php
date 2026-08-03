@@ -261,15 +261,27 @@ class Cron extends \think\console\Command
 	}
 	public function hostInfo()
 	{
-		$pushhost = \think\Db::name("zjmf_pushhost")->field("host_id,url,post_data")->where("status", 0)->where("num", "<", 5)->select()->toArray();
+		$pushhost = \think\Db::name("zjmf_pushhost")->field("id,host_id,url,post_data,num")->where("status", 0)->where("num", "<", 5)->order("id", "asc")->select()->toArray();
 		foreach ($pushhost as $v) {
-			$res = commonCurl($v["url"], json_decode($v["post_data"], true), 30);
-			if ($res["status"] == 200) {
-				$update = ["status" => 1, "time" => time(), "num" => $v["num"] + 1];
+			$post_data = json_decode($v["post_data"], true) ?: [];
+			try {
+				$res = commonCurl($v["url"], $post_data, 30);
+			} catch (\Throwable $e) {
+				$res = ["status" => 500];
+			}
+			$is_create = ($post_data["type"] ?? "") == "create";
+			$is_success = ($res["status"] ?? 0) == 200 || $is_create && ($res["status"] ?? 0) == 400;
+			if ($is_success) {
+				if ($is_create) {
+					$update = ["status" => 1, "time" => time(), "num" => $v["num"] + 1];
+					\think\Db::name("zjmf_pushhost")->where("id", $v["id"])->where("post_data", $v["post_data"])->update($update);
+				} else {
+					\think\Db::name("zjmf_pushhost")->where("id", $v["id"])->where("post_data", $v["post_data"])->delete();
+				}
 			} else {
 				$update = ["status" => 0, "time" => time(), "num" => $v["num"] + 1];
+				\think\Db::name("zjmf_pushhost")->where("id", $v["id"])->where("post_data", $v["post_data"])->update($update);
 			}
-			\think\Db::name("zjmf_pushhost")->where("id", $v["id"])->update($update);
 		}
 		$host = \think\Db::name("host")->alias("a")->field("a.id,a.uid,a.productid,a.domainstatus,a.regdate,a.dcimid,b.welcome_email,b.type,a.billingcycle,b.pay_type,b.name,a.nextduedate,a.billingcycle,a.dedicatedip,a.domain,a.username,a.password,a.os,a.assignedips,a.create_time,a.stream_info,b.api_type,b.zjmf_api_id,b.upstream_pid,b.server_group")->leftJoin("products b", "a.productid=b.id")->where("a.domainstatus", "=", "Pending")->where("b.api_type", "=", "resource")->where("a.regdate", "<", time() - 300)->select()->toArray();
 		$curl_multi_data = [];
@@ -715,6 +727,9 @@ class Cron extends \think\console\Command
 						}
 						if ($cancelled) {
 							(new \app\common\logic\Product())->refreshInventoryCache($productids, "cron unpaid order cancel commit");
+							foreach (array_unique(array_filter(array_column($hostids, "rel_id"))) as $host_id) {
+								pushHostInfo($host_id);
+							}
 						}
 						$ids = implode(",", $ids);
 					if ($ids) {

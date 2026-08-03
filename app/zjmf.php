@@ -145,14 +145,33 @@ function pushHostInfo($id, $other_field = "", $type = "")
 			$host["type"] = $type;
 		}
 		$post_data = array_merge($host, $sign);
-		$res = commonCurl($url, $post_data, 30);
-		if ($type == "create") {
-			if ($res["status"] == 200 || $res["status"] == 400) {
-				$zjmf_pushhost = ["host_id" => $id, "url" => $url, "status" => 1, "post_data" => json_encode($post_data), "time" => time(), "num" => 1];
+		$encoded_post_data = json_encode($post_data);
+		$retry_id = 0;
+		if ($type != "create") {
+			$pending = \think\Db::name("zjmf_pushhost")->field("id")->where("host_id", $id)->where("status", 0)->order("id", "desc")->find();
+			$retry = ["host_id" => $id, "url" => $url, "status" => 0, "post_data" => $encoded_post_data, "time" => time(), "num" => 1];
+			if (!empty($pending["id"])) {
+				$retry_id = intval($pending["id"]);
+				\think\Db::name("zjmf_pushhost")->where("id", $retry_id)->update($retry);
 			} else {
-				$zjmf_pushhost = ["host_id" => $id, "url" => $url, "status" => 0, "post_data" => json_encode($post_data), "time" => time(), "num" => 1];
+				$retry_id = intval(\think\Db::name("zjmf_pushhost")->insertGetId($retry));
+			}
+		}
+		try {
+			$res = commonCurl($url, $post_data, 30);
+		} catch (\Throwable $e) {
+			$res = ["status" => 500, "msg" => $e->getMessage()];
+		}
+		$is_success = ($res["status"] ?? 0) == 200 || $type == "create" && ($res["status"] ?? 0) == 400;
+		if ($type == "create") {
+			if ($is_success) {
+				$zjmf_pushhost = ["host_id" => $id, "url" => $url, "status" => 1, "post_data" => $encoded_post_data, "time" => time(), "num" => 1];
+			} else {
+				$zjmf_pushhost = ["host_id" => $id, "url" => $url, "status" => 0, "post_data" => $encoded_post_data, "time" => time(), "num" => 1];
 			}
 			\think\Db::name("zjmf_pushhost")->insert($zjmf_pushhost);
+		} elseif ($is_success && $retry_id > 0) {
+			\think\Db::name("zjmf_pushhost")->where("id", $retry_id)->where("post_data", $encoded_post_data)->delete();
 		}
 		return $res;
 	}

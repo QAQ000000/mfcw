@@ -48,6 +48,36 @@ class Host
 			error_log("Failed to record internal module diagnostic: " . $e->getMessage());
 		}
 	}
+	private function mergeUpstreamLifecycleState(array $host, array $upstream, array &$update)
+	{
+		$status = $upstream["domainstatus"] ?? "";
+		$allowedStatuses = ["Pending", "Active", "Cancelled", "Fraud", "Deleted", "Suspended"];
+		$terminalStatuses = ["Cancelled", "Fraud", "Deleted"];
+		$localStatus = $host["domainstatus"] ?? "";
+		if (!in_array($status, $allowedStatuses, true) || !in_array($localStatus, $allowedStatuses, true)) {
+			return;
+		}
+		if (in_array($localStatus, $terminalStatuses, true)) {
+			return;
+		}
+		if ($status === "Pending" && $localStatus !== "Pending") {
+			return;
+		}
+		if ($status === "Active" && !in_array($localStatus, ["Pending", "Active"], true)) {
+			return;
+		}
+		$update["domainstatus"] = $status;
+		if ($status === "Active") {
+			$update["suspendreason"] = "";
+		} elseif (array_key_exists("suspendreason", $upstream)) {
+			$suspendreason = (string) $upstream["suspendreason"];
+			$suspendreasonType = (string) ($upstream["suspendreason_type"] ?? "");
+			if ($status === "Suspended" && $suspendreasonType !== "" && strpos($suspendreason, $suspendreasonType . "-") !== 0) {
+				$suspendreason = $suspendreasonType . "-" . $suspendreason;
+			}
+			$update["suspendreason"] = $suspendreason;
+		}
+	}
 	/**
 	 * 作者: huanghao
 	 * 时间: 2019-12-13
@@ -416,9 +446,7 @@ class Host
 				$sms->sendSms($message_template_type[strtolower("host_suspend")], $client["phone_code"] . $client["phonenumber"], $params, false, $host["uid"]);
 			}
 			active_log_final(sprintf("模块命令:暂停host - User ID:%d - Host ID:%s - 原因：%s", $host["uid"], $id, $reason_type . "-" . $reason), $host["uid"], 2, $id);
-			if ($reason_type == "flow") {
-				pushHostInfo($id, "domainstatus,suspendreason");
-			}
+			pushHostInfo($id, "domainstatus,suspendreason");
 			$result["status"] = 200;
 			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", lang("MODULE_SUSPEND_SUCCESS"));
 		} else {
@@ -526,8 +554,7 @@ class Host
 			active_log_final(sprintf("模块命令:解除暂停成功 - Host ID:%d", $id), $host["uid"], 2, $id);
 			$result["status"] = 200;
 			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "解除暂停成功");
-			$suspendreason = explode("-", $host["suspendreason"])[0];
-			if ($host["domainstatus"] == "Suspended" && ($suspendreason == "用量超额" || $suspendreason == "flow")) {
+			if ($host["domainstatus"] == "Suspended") {
 				pushHostInfo($id, "domainstatus,suspendreason");
 			}
 		} else {
@@ -576,7 +603,9 @@ class Host
 				$post_data["id"] = $host["dcimid"];
 				$post_data["type"] = "Immediate";
 				$post_data["reason"] = "立即删除";
-				resourceCurl($host["productid"], "/host/cancel", $post_data);
+				$module_res = resourceCurl($host["productid"], "/host/cancel", $post_data);
+			} else {
+				$module_res = ["status" => 400, "msg" => "资源接口不可用"];
 			}
 		} else {
 			if (!empty($host["server_group"])) {
@@ -627,7 +656,7 @@ class Host
 			\think\Db::name("dcim_buy_record")->where("show_status", 0)->where("status", 1)->where("hostid", $id)->update(["show_status" => 1]);
 			$result["status"] = 200;
 			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "删除成功");
-			pushHostInfo($id);
+			pushHostInfo($id, "suspendreason");
 			\think\Db::name("host")->where("id", $id)->update(["stream_info" => ""]);
 		} else {
 			hook("after_module_terminate_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
@@ -682,9 +711,7 @@ class Host
 				$update["password"] = cmf_encrypt($module_res["data"]["host_data"]["password"]);
 				$update["port"] = \intval($module_res["data"]["host_data"]["port"]);
 				$update["os"] = $module_res["data"]["host_data"]["os"];
-				if ($host["domainstatus"] == "Pending" && $module_res["data"]["host_data"]["domainstatus"] == "Active") {
-					$update["domainstatus"] = $module_res["data"]["host_data"]["domainstatus"];
-				}
+				$this->mergeUpstreamLifecycleState($host, $module_res["data"]["host_data"], $update);
 				\think\Db::name("host")->where("id", $id)->update($update);
 			}
 		} elseif ($host["api_type"] == "resource") {
@@ -701,9 +728,7 @@ class Host
 					$update["password"] = cmf_encrypt($module_res["data"]["host_data"]["password"]);
 					$update["port"] = \intval($module_res["data"]["host_data"]["port"]);
 					$update["os"] = $module_res["data"]["host_data"]["os"];
-					if ($host["domainstatus"] == "Pending" && $module_res["data"]["host_data"]["domainstatus"] == "Active") {
-						$update["domainstatus"] = $module_res["data"]["host_data"]["domainstatus"];
-					}
+					$this->mergeUpstreamLifecycleState($host, $module_res["data"]["host_data"], $update);
 					\think\Db::name("host")->where("id", $id)->update($update);
 				}
 			}
@@ -715,9 +740,7 @@ class Host
 			$res = commonCurl($url, $url_data);
 			if ($res["status"] == 200) {
 				$update = ["dedicatedip" => $res["data"]["dedicatedip"], "assignedips" => $res["data"]["assignedips"], "domain" => $res["data"]["domain"], "bwlimit" => $res["data"]["bwlimit"], "bwusage" => $res["data"]["bwusage"], "username" => $res["data"]["username"], "password" => cmf_encrypt($res["data"]["password"]), "port" => $res["data"]["port"] ?: "", "os" => $res["data"]["os"] ?: ""];
-				if ($host["domainstatus"] == "Pending" && $res["data"]["domainstatus"] == "Active") {
-					$update["domainstatus"] = $res["data"]["domainstatus"];
-				}
+				$this->mergeUpstreamLifecycleState($host, $res["data"], $update);
 				\think\Db::name("host")->where("id", $id)->update($update);
 				$module_res = $res;
 			} else {
@@ -743,7 +766,7 @@ class Host
 			active_log_final(sprintf("模块命令:同步成功#Host ID:%d", $id), $host["uid"], 2, $id);
 			$result["status"] = 200;
 			$result["msg"] = $this->moduleErrorForClient($module_res["msg"] ?? "", $host["api_type"] ?? "", "同步成功");
-			pushHostInfo($id);
+			pushHostInfo($id, "suspendreason");
 		} else {
 			hook("after_module_sync_failed", ["params" => $hook_data, "msg" => $module_res["msg"]]);
 			active_log_final(ClientActivityLog::protectSupplierDescription(sprintf("模块命令:同步失败#Host ID:%d - 原因:%s", $id, $module_res["msg"]), $host["api_type"] ?? ""), $host["uid"], 2, $id);
