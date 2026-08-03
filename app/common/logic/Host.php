@@ -67,7 +67,7 @@ class Host
 	}
 	public function createFinal($id, $ip = "")
 	{
-		$host = \think\Db::name("host")->alias("a")->field("a.orderid,b.server_group,a.id,a.uid,a.productid,a.domainstatus,a.regdate,a.dcimid,b.welcome_email,b.type,c.email,a.billingcycle,b.pay_type,b.name,a.nextduedate,a.billingcycle,a.dedicatedip,a.domain,a.username,a.password,a.os,a.assignedips,a.create_time,a.stream_info,b.api_type,b.zjmf_api_id,b.upstream_pid,b.server_group")->leftJoin("products b", "a.productid=b.id")->leftJoin("clients c", "a.uid=c.id")->where("a.id", $id)->find();
+		$host = \think\Db::name("host")->alias("a")->field("a.orderid,b.server_group,a.id,a.uid,a.productid,a.domainstatus,a.regdate,a.dcimid,b.welcome_email,b.type,c.email,a.billingcycle,b.pay_type,b.name,a.nextduedate,a.billingcycle,a.dedicatedip,a.domain,a.username,a.password,a.os,a.assignedips,a.create_time,a.stream_info,b.api_type,b.zjmf_api_id,b.upstream_pid,b.upstream_version,b.server_group")->leftJoin("products b", "a.productid=b.id")->leftJoin("clients c", "a.uid=c.id")->where("a.id", $id)->find();
 		if (empty($host)) {
 			$result["status"] = 406;
 			$result["msg"] = lang("ID_ERROR");
@@ -146,6 +146,7 @@ class Host
 						$post_data["password"] = cmf_decrypt($host["password"]);
 						$post_data["currencyid"] = $module_res["user"]["currency"];
 						$post_data["qty"] = 1;
+						$post_data["supplier_version"] = (string) intval($host["upstream_version"]);
 						$configoption = \think\Db::name("host_config_options")->alias("a")->field("a.qty,b.option_type,b.upstream_id config_upstream,c.upstream_id")->leftJoin("product_config_options b", "a.configid=b.id")->leftJoin("product_config_options_sub c", "a.optionid=c.id")->where("a.relid", $id)->where("b.upstream_id", ">", 0)->where("c.upstream_id", ">", 0)->select()->toArray();
 						foreach ($configoption as $v) {
 							if (judgeQuantity($v["option_type"])) {
