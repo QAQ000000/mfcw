@@ -37,34 +37,49 @@ class UserInvoiceController extends CommonController
 		$params = $this->request->only(["limit", "page", "order", "sort", "status", "keywords"]);
 		$page = !empty($params["page"]) ? intval($params["page"]) : config("page");
 		$limit = !empty($params["limit"]) ? intval($params["limit"]) : config("limit");
-		$order = !empty($params["order"]) ? trim($params["order"]) : "id";
-		$sort = !empty($params["sort"]) ? trim($params["sort"]) : "DESC";
+		$order = !empty($params["order"]) && is_string($params["order"]) ? trim($params["order"]) : "id";
+		$sort = !empty($params["sort"]) && is_string($params["sort"]) ? strtoupper(trim($params["sort"])) : "DESC";
 		$status = !empty($params["status"]) ? $params["status"] : "";
-		$keywords = !empty($params["keywords"]) ? $params["keywords"] : "";
+		$keywords = isset($params["keywords"]) && is_scalar($params["keywords"]) ? trim((string) $params["keywords"]) : "";
+		$order_map = ["id" => "id", "amount" => "subtotal", "create_time" => "create_time", "paid_time" => "paid_time", "status" => "status", "payment" => "payment", "type" => "type", "total" => "total", "subtotal" => "subtotal"];
+		if (!isset($order_map[$order])) {
+			return jsons(["status" => 400, "msg" => lang("排序字段错误")]);
+		}
+		if (!in_array($sort, ["ASC", "DESC"], true)) {
+			return jsons(["status" => 400, "msg" => lang("排序规则错误")]);
+		}
+		$order = $order_map[$order];
 		$data = [];
 		$client_currency = getUserCurrency($uid);
 		$suffix = $client_currency["suffix"];
 		$data["currency"] = $client_currency;
-		$where = "1=1";
-		if (isset($keywords[0])) {
-			$arr = [];
+		$status_matches = [];
+		$type_matches = [];
+		if ($keywords !== "") {
 			foreach (config("invoice_payment_status") as $k => $v) {
 				if (strpos($v["name"], $keywords) !== false) {
-					$arr[] = "`status` = \"" . $k . "\"";
+					$status_matches[] = $k;
 				}
 			}
 			$tmp = ["renew" => "续费", "product" => "产品", "recharge" => "充值", "setup" => "初装费", "upgrade" => "升降级", "discount" => "客户折扣", "credit_limit" => "信用额"];
 			foreach ($tmp as $k => $v) {
 				if (strpos($v, $keywords) !== false) {
-					$arr[] = "`type` = \"" . $k . "\"";
+					$type_matches[] = $k;
 				}
 			}
-			unset($tmp);
-			$arr[] = "`id` like \"%" . $keywords . "%\"";
-			$arr[] = "`paid_time` like \"%" . $keywords . "%\"";
-			$arr[] = "`total` like \"%" . $keywords . "%\"";
-			$where = implode(" OR ", $arr);
 		}
+		$keyword_where = function (\think\db\Query $query) use($keywords, $status_matches, $type_matches) {
+			if ($keywords === "") {
+				return;
+			}
+			$query->where("id", "like", "%" . $keywords . "%")->whereOr("paid_time", "like", "%" . $keywords . "%")->whereOr("total", "like", "%" . $keywords . "%");
+			if (!empty($status_matches)) {
+				$query->whereOr("status", "in", $status_matches);
+			}
+			if (!empty($type_matches)) {
+				$query->whereOr("type", "in", $type_matches);
+			}
+		};
 		$gateways = gateway_list();
 		$count = \think\Db::name("invoices")->field("id,paid_time,status,payment,subtotal as total,type as invoice_type,subtotal as sub,credit")->where("delete_time", 0)->where("is_delete", 0)->where("uid", $uid)->where(function (\think\db\Query $query) {
 			$query->where("type", "product")->whereOr("type", "upgrade");
@@ -72,7 +87,7 @@ class UserInvoiceController extends CommonController
 			if (!empty($status)) {
 				$query->where("status", $status);
 			}
-		})->whereRaw($where)->count();
+		})->where($keyword_where)->count();
 		$data["count"] = $count;
 		$invoices = \think\Db::name("invoices")->field("id,paid_time,status,payment,subtotal as total,type as invoice_type,subtotal as sub,credit,use_credit_limit")->where("delete_time", 0)->where("is_delete", 0)->where("uid", $uid)->where(function (\think\db\Query $query) {
 			$query->where("type", "product")->whereOr("type", "upgrade");
@@ -80,7 +95,7 @@ class UserInvoiceController extends CommonController
 			if (!empty($status)) {
 				$query->where("status", $status);
 			}
-		})->whereRaw($where)->order($order, $sort)->order("id", "desc")->limit($limit)->page($page)->select()->toArray();
+		})->where($keyword_where)->order($order, $sort)->order("id", "desc")->limit($limit)->page($page)->select()->toArray();
 		foreach ($invoices as $k => $invoice) {
 			if ($invoice["status"] == "Paid") {
 				if ($invoice["use_credit_limit"] == 1) {
@@ -279,18 +294,21 @@ class UserInvoiceController extends CommonController
 	{
 		$params = $this->request->param();
 		$uid = $this->request->uid;
-		$id = $params["id"];
+		$id = intval($params["id"] ?? 0);
 		if (!$id) {
 			return jsons(["status" => 400, "msg" => lang("ID_ERROR")]);
 		}
-		$invoice = \think\Db::name("invoices")->where("delete_time", 0)->where("id", $id)->find();
+		$invoice = \think\Db::name("invoices")->where("delete_time", 0)->where("is_delete", 0)->where("uid", $uid)->where("id", $id)->find();
+		if (empty($invoice)) {
+			return jsons(["status" => 404, "msg" => lang("ID_ERROR")]);
+		}
 		if ($invoice["type"] == "credit_limit") {
 			return jsons(["status" => 400, "msg" => lang("信用额账单,不可删除!")]);
 		}
 		if ($invoice["status"] != "Unpaid") {
 			return jsons(["status" => 400, "msg" => lang("非未支付账单,不可删除!")]);
 		}
-		$hosts = \think\Db::name("host")->alias("a")->field("a.id,a.domainstatus")->leftJoin("orders b", "a.orderid = b.id")->where("b.invoiceid", $id)->where("b.delete_time", 0)->select()->toArray();
+		$hosts = \think\Db::name("host")->alias("a")->field("a.id,a.domainstatus")->leftJoin("orders b", "a.orderid = b.id")->where("a.uid", $uid)->where("b.uid", $uid)->where("b.invoiceid", $id)->where("b.delete_time", 0)->select()->toArray();
 		foreach ($hosts as $v) {
 			if ($v["domainstatus"] != "Pending") {
 				return jsons(["status" => 400, "msg" => "产品非待开通,不可删除"]);
@@ -304,7 +322,9 @@ class UserInvoiceController extends CommonController
 			$order = \think\Db::name("orders")->where("uid", $uid)->where("delete_time", 0)->where("invoiceid", $id)->find();
 			$order_id = $order["id"];
 			\think\Db::name("orders")->where("uid", $uid)->where("id", $order_id)->where("delete_time", 0)->update(["status" => "Cancelled", "update_time" => time()]);
-			\think\Db::name("host")->whereIn("id", $hids)->update(["domainstatus" => "Cancelled", "update_time" => time()]);
+			if (!empty($hids)) {
+				\think\Db::name("host")->where("uid", $uid)->whereIn("id", $hids)->update(["domainstatus" => "Cancelled", "update_time" => time()]);
+			}
 			\think\Db::commit();
 		} catch (\Exception $e) {
 			\think\Db::rollback();

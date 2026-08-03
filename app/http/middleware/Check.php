@@ -110,8 +110,11 @@ class Check
 			if (!$tmp) {
 				return ["status" => 405, "msg" => "请登陆后再试"];
 			}
-			$checkJwtToken = $this->verifyJwt($authorization);
-			$pass = \think\facade\Cache::get("client_user_update_pass_" . $tmp);
+				$checkJwtToken = $this->verifyJwt($authorization);
+				if (($checkJwtToken["status"] ?? 0) !== 1001) {
+					return $checkJwtToken;
+				}
+				$pass = \think\facade\Cache::get("client_user_update_pass_" . $tmp);
 			if ($pass && $checkJwtToken["nbf"] < $pass) {
 				return ["status" => 405, "msg" => "密码已修改,请重新登陆"];
 			}
@@ -142,8 +145,11 @@ class Check
 			if (!$tmp) {
 				return ["status" => 405, "msg" => "请登陆后再试"];
 			}
-			$checkJwtToken = $this->verifyJwt($authorization);
-			$pass = \think\facade\Cache::get("client_user_update_pass_" . $tmp);
+				$checkJwtToken = $this->verifyJwt($authorization);
+				if (($checkJwtToken["status"] ?? 0) !== 1001) {
+					return $checkJwtToken;
+				}
+				$pass = \think\facade\Cache::get("client_user_update_pass_" . $tmp);
 			if ($pass && $checkJwtToken["nbf"] < $pass) {
 				return ["status" => 405, "msg" => "密码已修改,请重新登陆"];
 			}
@@ -171,14 +177,12 @@ class Check
 				$msg = ["status" => 1002, "msg" => "Token验证不通过,用户不存在"];
 			}
 			return $msg;
-		} catch (\Firebase\JWT\SignatureInvalidException $e) {
-			echo json_encode(["status" => 1002, "msg" => "Token无效"]);
-			exit;
-		} catch (\Firebase\JWT\ExpiredException $e) {
-			echo json_encode(["status" => 405, "msg" => "请重新登录"]);
-			exit;
-		} catch (Exception $e) {
-			return $e;
-		}
+			} catch (\Firebase\JWT\SignatureInvalidException $e) {
+				return ["status" => 1002, "msg" => "Token无效"];
+			} catch (\Firebase\JWT\ExpiredException $e) {
+				return ["status" => 405, "msg" => "请重新登录"];
+			} catch (\Throwable $e) {
+				return ["status" => 1002, "msg" => "Token无效"];
+			}
 	}
 }

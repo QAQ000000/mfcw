@@ -587,7 +587,7 @@ class HostController extends CommonController
 		$returndata["dcim"]["flowpacket"] = [];
 		$returndata["dcim"]["flow_packet_use_list"] = [];
 		if ($host_data["bwlimit"] > 0) {
-			$flowpacket = \think\Db::name("dcim_flow_packet")->field("id,name,capacity,price,sale_times,stock")->where("status", 1)->whereRaw("FIND_IN_SET('{$host_data["productid"]}', allow_products)")->select()->toArray();
+			$flowpacket = \think\Db::name("dcim_flow_packet")->field("id,name,capacity,price,sale_times,stock")->where("status", 1)->whereRaw("FIND_IN_SET(:product_id, allow_products)", ["product_id" => intval($host_data["productid"])])->select()->toArray();
 			if (!empty($flowpacket)) {
 				foreach ($flowpacket as $k => $v) {
 					$flowpacket[$k]["leave"] = 1;
@@ -1170,7 +1170,7 @@ class HostController extends CommonController
 			}
 		} else {
 			if ($bwlimit > 0) {
-				$flowpacket = \think\Db::name("dcim_flow_packet")->field("id,name,capacity,price,sale_times,stock")->where("status", 1)->whereRaw("FIND_IN_SET('{$productid}', allow_products)")->select()->toArray();
+				$flowpacket = \think\Db::name("dcim_flow_packet")->field("id,name,capacity,price,sale_times,stock")->where("status", 1)->whereRaw("FIND_IN_SET(:product_id, allow_products)", ["product_id" => intval($productid)])->select()->toArray();
 				if (!empty($flowpacket)) {
 					foreach ($flowpacket as $k => $v) {
 						$flowpacket[$k]["leave"] = 1;
@@ -1648,7 +1648,7 @@ class HostController extends CommonController
 			}
 		} else {
 			if ($host_data["bwlimit"] > 0) {
-				$flowpacket = \think\Db::name("dcim_flow_packet")->field("id,name,capacity,price,sale_times,stock")->where("status", 1)->whereRaw("FIND_IN_SET('{$host_data["productid"]}', allow_products)")->select()->toArray();
+				$flowpacket = \think\Db::name("dcim_flow_packet")->field("id,name,capacity,price,sale_times,stock")->where("status", 1)->whereRaw("FIND_IN_SET(:product_id, allow_products)", ["product_id" => intval($host_data["productid"])])->select()->toArray();
 				if (!empty($flowpacket)) {
 					foreach ($flowpacket as $k => $v) {
 						$flowpacket[$k]["leave"] = 1;
@@ -2351,13 +2351,23 @@ class HostController extends CommonController
 	public function postAutoRenew()
 	{
 		$params = $this->request->param();
-		$hid = $params["hostid"];
-		$initiative_renew = isset($params["initiative_renew"]) ? $params["initiative_renew"] : 0;
-		if (strlen($initiative_renew) > 0) {
-			\think\Db::name("host")->where("id", $hid)->update(["initiative_renew" => $initiative_renew]);
+		$uid = intval($this->request->uid);
+		$hid = intval($params["hostid"] ?? 0);
+		if (array_key_exists("initiative_renew", $params)) {
+			if (!in_array((string) $params["initiative_renew"], ["0", "1"], true)) {
+				return json(["status" => 400, "msg" => "参数错误"]);
+			}
+			$initiative_renew = intval($params["initiative_renew"]);
+		} else {
+			$initiative_renew = 0;
 		}
+		$host = \think\Db::name("host")->field("id")->where("id", $hid)->where("uid", $uid)->find();
+		if (empty($host)) {
+			return json(["status" => 404, "msg" => lang("THE_PRODUCT_WAS_NOT_FOUND")]);
+		}
+		\think\Db::name("host")->where("id", $hid)->where("uid", $uid)->update(["initiative_renew" => $initiative_renew]);
 		$text = ["关闭", "开启"];
-		active_log_final("设置产品-Host ID:{$hid} 的自动续费功能为: {$text[$initiative_renew]}", $params["uid"], 2, $hid, 2);
+		active_log_final("设置产品-Host ID:{$hid} 的自动续费功能为: {$text[$initiative_renew]}", $uid, 2, $hid, 2);
 		return json(["status" => 200, "msg" => lang("SUCCESS MESSAGE")]);
 	}
 	/**
@@ -2813,9 +2823,14 @@ class HostController extends CommonController
 	public function deleteCancel()
 	{
 		$param = $this->request->param();
-		$hid = intval($param["id"]);
+		$uid = intval($this->request->uid);
+		$hid = intval($param["id"] ?? 0);
+		$host = \think\Db::name("host")->field("id")->where("id", $hid)->where("uid", $uid)->find();
+		if (empty($host)) {
+			return jsons(["status" => 404, "msg" => lang("THE_PRODUCT_WAS_NOT_FOUND")]);
+		}
 		\think\Db::name("cancel_requests")->where("relid", $hid)->where("delete_time", 0)->delete();
-		active_log_final("产品 #Host ID:{$hid} 取消停用请求成功", $param["uid"], 2, $hid, 2);
+		active_log_final("产品 #Host ID:{$hid} 取消停用请求成功", $uid, 2, $hid, 2);
 		return jsons(["status" => 200, "msg" => lang("取消停用请求成功")]);
 	}
 	/**
@@ -3255,7 +3270,7 @@ class HostController extends CommonController
 			}
 		} else {
 			if ($host_data["bwlimit"] > 0) {
-				$flowpacket = \think\Db::name("dcim_flow_packet")->field("id,name,capacity,price,sale_times,stock")->where("status", 1)->whereRaw("FIND_IN_SET('{$host_data["productid"]}', allow_products)")->select()->toArray();
+				$flowpacket = \think\Db::name("dcim_flow_packet")->field("id,name,capacity,price,sale_times,stock")->where("status", 1)->whereRaw("FIND_IN_SET(:product_id, allow_products)", ["product_id" => intval($host_data["productid"])])->select()->toArray();
 				if (!empty($flowpacket)) {
 					foreach ($flowpacket as $k => $v) {
 						$flowpacket[$k]["leave"] = 1;

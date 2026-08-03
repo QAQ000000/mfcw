@@ -161,7 +161,7 @@ class NewsController extends \cmf\controller\HomeBaseController
 			return json(["status" => 406, "msg" => "新闻未找到"]);
 		}
 		$new_content["head_img"] = isset($new_content["head_img"][0]) ? $this->upload_url . $new_content : "";
-		$new_content["content"] = htmlspecialchars_decode(htmlspecialchars_decode($new_content["content"]));
+		$new_content["content"] = safeHtmlContent($new_content["content"]);
 		$returndata["new_content"] = $new_content;
 		$where = [["hidden", "=", 0]];
 		$parent = \think\Db::name("news_type")->find($new_content["parent_id"]);
@@ -278,7 +278,7 @@ class NewsController extends \cmf\controller\HomeBaseController
 		$count = \think\Db::name("news_menu as m")->leftJoin("news", "m.id=news.relid")->where($where)->count();
 		$url = $this->upload_url;
 		$returndata["list"] = array_map(function ($v) use($url) {
-			$v["content"] = strip_tags(htmlspecialchars_decode(htmlspecialchars_decode($v["content"])));
+			$v["content"] = strip_tags(safeHtmlContent($v["content"]));
 			$v["head_img"] = isset($v["head_img"][0]) ? $url . $v["head_img"] : "";
 			return $v;
 		}, $news_menu);
@@ -325,7 +325,7 @@ class NewsController extends \cmf\controller\HomeBaseController
 			return json(["status" => 406, "msg" => "新闻未找到"]);
 		}
 		$new_content["head_img"] = isset($new_content["head_img"][0]) ? $this->upload_url . $new_content : "";
-		$new_content["content"] = htmlspecialchars_decode(htmlspecialchars_decode($new_content["content"]));
+		$new_content["content"] = safeHtmlContent($new_content["content"]);
 		$returndata["new_content"] = $new_content;
 		$where = [["hidden", "=", 0]];
 		$parent = \think\Db::name("news_type")->find($new_content["parent_id"]);

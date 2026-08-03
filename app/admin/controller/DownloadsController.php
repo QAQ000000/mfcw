@@ -655,10 +655,11 @@ class DownloadsController extends AdminBaseController
 			return jsonrule(["status" => 200, "data" => $this->redirect($download_data["locationname"], 302)]);
 			exit;
 		}
-		if (file_exists(UPLOAD_PATH_DWN . "support/" . $filename)) {
+		$download_path = \app\common\logic\Download::resolveSupportFile($filename);
+		if ($download_path !== null) {
 			\ob_clean();
 			header("Access-Control-Expose-Headers: Content-disposition");
-			return download(UPLOAD_PATH_DWN . "support/" . $filename, explode("^", $filename)[1]);
+			return download($download_path, explode("^", $filename)[1] ?? $filename);
 		} else {
 			return jsons(["status" => 406, "msg" => "资源走丢了"]);
 		}
@@ -702,13 +703,14 @@ class DownloadsController extends AdminBaseController
 	{
 		$param = $request->param();
 		$id = intval($param["id"]);
-		$uid = intval($param["uid"]);
-		$download_data = \think\Db::name("userdownloads")->where("id", $id)->find();
-		$filename = $download_data["url"];
-		if (file_exists(UPLOAD_PATH_DWN . "clients/" . $uid . "/" . $filename)) {
-			\ob_clean();
-			header("Access-Control-Expose-Headers: Content-disposition");
-			return download(UPLOAD_PATH_DWN . "clients/" . $uid . "/" . $filename, explode("^", $filename)[1]);
+			$uid = intval($param["uid"]);
+			$download_data = \think\Db::name("userdownloads")->where("id", $id)->find();
+			$filename = $download_data["url"];
+			$download_path = \app\common\logic\Download::resolveFileInDirectory(UPLOAD_PATH_DWN . "clients/" . $uid . "/", $filename);
+			if ($download_path !== null) {
+				\ob_clean();
+				header("Access-Control-Expose-Headers: Content-disposition");
+				return download($download_path, explode("^", $filename)[1] ?? $filename);
 		} else {
 			return jsons(["status" => 406, "msg" => "资源走丢了"]);
 		}
@@ -826,8 +828,8 @@ class DownloadsController extends AdminBaseController
 			$idata = ["uid" => $uid, "adminid" => session("ADMIN_ID"), "name" => $name, "remarks" => $remarks, "create_time" => time()];
 			$idata["downame"] = explode("^", $filename)[1];
 			$idata["url"] = $filename;
-			if (!file_exists(UPLOAD_PATH_DWN . "clients/" . $uid . "/" . $filename)) {
-				return jsonrule(["status" => 400, "data" => "public/upload/clients/" . $uid . "/" . "目录下不存在此文件，请检查文件名是否一致"]);
+				if (\app\common\logic\Download::resolveFileInDirectory(UPLOAD_PATH_DWN . "clients/" . $uid . "/", $filename) === null) {
+					return jsonrule(["status" => 400, "data" => "public/upload/clients/" . $uid . "/" . "目录下不存在此文件，请检查文件名是否一致"]);
 			}
 			if (empty($idata["url"])) {
 				return jsonrule(["status" => 400, "data" => "文件未上传成功，请等待"]);
@@ -838,7 +840,10 @@ class DownloadsController extends AdminBaseController
 				active_logs(sprintf($this->lang["Download_admin_postadduserfile"], $res, $name . "文件名:" . $idata["downame"] . "备注:" . $remarks), $uid, "", 2);
 				return jsonrule(["status" => 200, "data" => "添加文件成功"]);
 			} else {
-				@unlink(UPLOAD_PATH_DWN . "clients/" . $uid . "/" . $filename);
+					$path = \app\common\logic\Download::resolveFileInDirectory(UPLOAD_PATH_DWN . "clients/" . $uid . "/", $filename);
+					if ($path !== null) {
+						@unlink($path);
+					}
 			}
 		}
 	}
@@ -920,7 +925,10 @@ class DownloadsController extends AdminBaseController
 				active_logs(sprintf($this->lang["Download_admin_postsaveuserfile"], $id, $desc), $uid, "", 2);
 				return jsonrule(["status" => 200, "data" => "保存成功"]);
 			} else {
-				@unlink(UPLOAD_PATH_DWN . "clients/" . $uid . "/" . $filename);
+					$path = \app\common\logic\Download::resolveFileInDirectory(UPLOAD_PATH_DWN . "clients/" . $uid . "/", $filename);
+					if ($path !== null) {
+						@unlink($path);
+					}
 				return jsonrule(["status" => 400, "data" => "保存失败"]);
 			}
 		}

@@ -213,13 +213,14 @@ class DownController extends CommonController
 			return jsonrule(["status" => 200, "data" => $this->redirect($download_data["locationname"], 302)]);
 			exit;
 		}
-		if (file_exists(UPLOAD_PATH_DWN . "support/" . $filename)) {
+		$download_path = \app\common\logic\Download::resolveSupportFile($filename);
+		if ($download_path !== null) {
 			\think\Db::name("downloads")->where("id", $id)->setInc("downloads");
 			\ob_clean();
-			return download(UPLOAD_PATH_DWN . "support/" . $filename, $download_data["locationname"]);
-			return jsonrule(["status" => 200, "data" => $this->download(UPLOAD_PATH_DWN . "support/" . $filename, explode("^", $filename)[1])]);
+			return download($download_path, $download_data["locationname"]);
+			return jsonrule(["status" => 200, "data" => $this->download($download_path, explode("^", $filename)[1])]);
 			exit;
-			return $this->download(UPLOAD_PATH_DWN . "support/" . $filename, $filename);
+			return $this->download($download_path, $filename);
 		} else {
 			return jsons(["status" => 406, "msg" => "资源走丢了"]);
 		}
@@ -242,9 +243,10 @@ class DownController extends CommonController
 		$url = CMF_ROOT . "public" . config("app_file_url");
 		$app_file = explode(",", $product["app_file"]);
 		if (!empty($app_file[0])) {
-			if (file_exists($url . $app_file[0])) {
-				$new_name = explode("^", $app_file[0])[1];
-				return $this->download($url . $app_file[0], $new_name);
+				$download_path = \app\common\logic\Download::resolveFileInDirectory($url, $app_file[0]);
+				if ($download_path !== null) {
+					$new_name = explode("^", $app_file[0])[1] ?? $app_file[0];
+					return $this->download($download_path, $new_name);
 			}
 		}
 		return jsons(["status" => 400, "msg" => "资源走丢了"]);
@@ -281,9 +283,10 @@ class DownController extends CommonController
 		$url = CMF_ROOT . "public" . config("app_file_url");
 		$app_file = explode(",", $product["app_file"]);
 		if (!empty($app_file[0])) {
-			if (file_exists($url . $app_file[0])) {
-				$new_name = explode("^", $app_file[0])[1];
-				return $this->download($url . $app_file[0], $new_name);
+				$download_path = \app\common\logic\Download::resolveFileInDirectory($url, $app_file[0]);
+				if ($download_path !== null) {
+					$new_name = explode("^", $app_file[0])[1] ?? $app_file[0];
+					return $this->download($download_path, $new_name);
 			}
 		}
 		return jsons(["status" => 400, "msg" => "资源走丢了"]);
@@ -324,9 +327,10 @@ class DownController extends CommonController
 		$url = CMF_ROOT . "public" . config("app_file_url");
 		$app_file = explode(",", $product["app_file"]);
 		if (!empty($app_file[0])) {
-			if (file_exists($url . $app_file[0])) {
-				$new_name = explode("^", $app_file[0])[1];
-				return $this->download($url . $app_file[0], $new_name);
+				$download_path = \app\common\logic\Download::resolveFileInDirectory($url, $app_file[0]);
+				if ($download_path !== null) {
+					$new_name = explode("^", $app_file[0])[1] ?? $app_file[0];
+					return $this->download($download_path, $new_name);
 			}
 		}
 		return jsons(["status" => 400, "msg" => "资源走丢了"]);

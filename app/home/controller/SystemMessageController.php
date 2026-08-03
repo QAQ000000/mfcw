@@ -36,25 +36,26 @@ class SystemMessageController extends \cmf\controller\HomeBaseController
 	public function getMessageList(\think\Request $request)
 	{
 		$params = $data = $this->request->param();
+		$uid = intval($request->uid);
 		$page = $params["page"] ?? config("page");
 		$limit = $params["limit"] ?? config("limit");
-		$list = \think\Db::name("system_message")->alias("sm")->join("clients c", "c.id = sm.uid")->where(function (\think\db\Query $query) use($params) {
+		$list = \think\Db::name("system_message")->alias("sm")->join("clients c", "c.id = sm.uid")->where(function (\think\db\Query $query) use($params, $uid) {
 			if ($params["type"] > 0) {
 				$query->where("sm.type", $params["type"]);
 			}
 			$query->where("sm.delete_time", 0);
-			$query->where("sm.uid", $params["uid"]);
+			$query->where("sm.uid", $uid);
 		})->page($page)->limit($limit)->field("sm.*,c.username,c.phonenumber,c.email")->order("sm.id", "desc")->select()->toArray();
-		$count = \think\Db::name("system_message")->alias("sm")->join("clients c", "c.id = sm.uid")->where(function (\think\db\Query $query) use($params) {
+		$count = \think\Db::name("system_message")->alias("sm")->join("clients c", "c.id = sm.uid")->where(function (\think\db\Query $query) use($params, $uid) {
 			if ($params["type"] > 0) {
 				$query->where("sm.type", $params["type"]);
 			}
 			$query->where("sm.delete_time", 0);
-			$query->where("sm.uid", $params["uid"]);
+			$query->where("sm.uid", $uid);
 		})->count();
 		if ($list) {
 			foreach ($list as &$item) {
-				$item["content"] = htmlspecialchars_decode(htmlspecialchars_decode($item["content"]));
+				$item["content"] = safeHtmlContent($item["content"]);
 				$item["create_time"] = date("Y-m-d H:i:s", $item["create_time"]);
 				$item["type_text"] = $this->system_message_type[$item["type"]];
 				if ($item["attachment"]) {
@@ -76,7 +77,7 @@ class SystemMessageController extends \cmf\controller\HomeBaseController
 		foreach ($system_message_type as $key => $type_item) {
 			$temp_message["id"] = $key;
 			$temp_message["name"] = $type_item;
-			$temp_message["unread_num"] = \think\Db::name("system_message")->where("delete_time", 0)->where("read_time", 0)->where("type", $key)->where("uid", $params["uid"])->count();
+			$temp_message["unread_num"] = \think\Db::name("system_message")->where("delete_time", 0)->where("read_time", 0)->where("type", $key)->where("uid", $uid)->count();
 			$unread_count[] = $temp_message;
 		}
 		$data["list"] = $list;
@@ -94,13 +95,14 @@ class SystemMessageController extends \cmf\controller\HomeBaseController
 	public function getUnreadList()
 	{
 		$params = $data = $this->request->param();
+		$uid = intval($this->request->uid);
 		$unread_count = [];
 		$unread_count_num = 0;
 		$system_message_type = $this->system_message_type;
 		foreach ($system_message_type as $key => $type_item) {
 			$temp_message["id"] = $key;
 			$temp_message["name"] = $type_item;
-			$temp_message["unread_num"] = \think\Db::name("system_message")->where("delete_time", 0)->where("read_time", 0)->where("type", $key)->where("uid", $params["uid"])->count();
+			$temp_message["unread_num"] = \think\Db::name("system_message")->where("delete_time", 0)->where("read_time", 0)->where("type", $key)->where("uid", $uid)->count();
 			$unread_count_num += $temp_message["unread_num"];
 			$unread_count[] = $temp_message;
 		}
@@ -118,9 +120,11 @@ class SystemMessageController extends \cmf\controller\HomeBaseController
 	public function readSystemMessage()
 	{
 		$param = $this->request->param();
-		$ids = $param["ids"];
+		$uid = intval($this->request->uid);
+		$ids = $param["ids"] ?? [];
+		$ids = $ids && !is_array($ids) ? [$ids] : $ids;
 		$type = $param["type"] ?? 0;
-		$user_message_ids = \think\Db::name("system_message")->where("uid", $param["uid"])->column("id");
+		$user_message_ids = \think\Db::name("system_message")->where("uid", $uid)->column("id");
 		if (empty($user_message_ids)) {
 			return jsonrule(["status" => 400, "msg" => "暂无可阅读消息"]);
 		}
@@ -131,7 +135,7 @@ class SystemMessageController extends \cmf\controller\HomeBaseController
 				}
 			}
 		}
-		$result = \think\Db::name("system_message")->where("uid", $param["uid"])->where(function (\think\db\Query $query) use($ids, $type) {
+		$result = \think\Db::name("system_message")->where("uid", $uid)->where(function (\think\db\Query $query) use($ids, $type) {
 			if ($ids) {
 				$query->where("id", "in", $ids);
 			}
@@ -157,9 +161,11 @@ class SystemMessageController extends \cmf\controller\HomeBaseController
 	public function deleteSystemMessage()
 	{
 		$param = $this->request->param();
-		$ids = $param["ids"];
+		$uid = intval($this->request->uid);
+		$ids = $param["ids"] ?? [];
+		$ids = $ids && !is_array($ids) ? [$ids] : $ids;
 		$type = $param["type"] ?? 0;
-		$user_message_ids = \think\Db::name("system_message")->where("uid", $param["uid"])->column("id");
+		$user_message_ids = \think\Db::name("system_message")->where("uid", $uid)->column("id");
 		if (empty($user_message_ids)) {
 			return jsonrule(["status" => 400, "msg" => "暂无可删除消息"]);
 		}
@@ -170,7 +176,7 @@ class SystemMessageController extends \cmf\controller\HomeBaseController
 				}
 			}
 		}
-		$result = \think\Db::name("system_message")->where("uid", $param["uid"])->where(function (\think\db\Query $query) use($ids, $type) {
+		$result = \think\Db::name("system_message")->where("uid", $uid)->where(function (\think\db\Query $query) use($ids, $type) {
 			if ($ids) {
 				$query->where("id", "in", $ids);
 			}

@@ -274,17 +274,35 @@ class Upload
 			}
 			return $ret;
 		}
-		$file = htmlspecialchars_decode($file);
-		$filepath = UPLOAD_DEFAULT . $file;
-		$newfile = $path . $file;
-		if (file_exists($newfile)) {
+		if (!is_string($file)) {
+			return ["error" => "文件名无效"];
+		}
+		$file = htmlspecialchars_decode($file, ENT_QUOTES);
+		if ($file === "" || strpos($file, "\0") !== false || strpos($file, "/") !== false || strpos($file, "\\") !== false || basename($file) !== $file || !preg_match('/^[a-f0-9]{32}[0-9]{10,}(?:\^[^\x00\/\\\\]+|\.[A-Za-z0-9]{1,16})?$/u', $file)) {
+			return ["error" => "文件名无效"];
+		}
+		$source_base = realpath(UPLOAD_DEFAULT);
+		if ($source_base === false) {
+			return ["error" => "临时文件目录不存在"];
+		}
+		if (!is_dir($path) && !mkdir($path, 0755, true)) {
+			return ["error" => "目标目录创建失败"];
+		}
+		$target_base = realpath($path);
+		if ($target_base === false) {
+			return ["error" => "目标目录不存在"];
+		}
+		$newfile = rtrim($target_base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $file;
+		if (is_file($newfile) && !is_link($newfile)) {
 			return $file;
 		}
-		if (!file_exists($filepath)) {
-			return ["error" => "文件不存在"];
+		if (file_exists($newfile) || is_link($newfile)) {
+			return ["error" => "目标文件异常"];
 		}
-		if (!file_exists($path)) {
-			mkdir($path, 511, true);
+		$filepath = realpath($source_base . DIRECTORY_SEPARATOR . $file);
+		$source_prefix = rtrim($source_base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+		if ($filepath === false || !is_file($filepath) || is_link($filepath) || strncmp($filepath, $source_prefix, strlen($source_prefix)) !== 0) {
+			return ["error" => "文件不存在"];
 		}
 		try {
 			if (copy($filepath, $newfile)) {

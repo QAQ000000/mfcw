@@ -911,7 +911,8 @@ class Upgrade
 				}
 				if ($promo_code && $promoqualifies) {
 					$upgradepromo = \think\Db::name("promo_code")->field("upgrade_config")->where("code", $promo_code)->find();
-					$upgradeconfig = unserialize($upgradepromo["upgrade_config"]);
+					$upgradeconfig = @unserialize($upgradepromo["upgrade_config"], ["allowed_classes" => false]);
+					$upgradeconfig = is_array($upgradeconfig) ? $upgradeconfig : [];
 					$promotype = $upgradeconfig["upgrade_value_type"] ?? "";
 					$promovalue = $upgradeconfig["upgrade_value"] ?? "";
 					\think\Db::name("promo_code")->where("code", $promo_code)->setInc("used");
@@ -1666,7 +1667,8 @@ class Upgrade
 				}
 				if ($promo_code) {
 					$upgradepromo = \think\Db::name("promo_code")->field("upgrade_config,type,value")->where("code", $promo_code)->find();
-					$upgradeconfig = unserialize($upgradepromo["upgrade_config"]);
+					$upgradeconfig = @unserialize($upgradepromo["upgrade_config"], ["allowed_classes" => false]);
+					$upgradeconfig = is_array($upgradeconfig) ? $upgradeconfig : [];
 					$promotype = $upgradeconfig["upgrade_value_type"] ?: $upgradepromo["type"];
 					$promovalue = $upgradeconfig["upgrade_value"] ?: $upgradepromo["value"];
 					\think\Db::name("promo_code")->where("code", $promo_code)->setInc("used");

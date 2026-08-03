@@ -156,13 +156,31 @@ function crossProductUpgrade($hostid, $new_productid)
 }
 function ticketContent($content)
 {
-	$content = explode("\r\n", $content);
+	$content = html_entity_decode((string) $content, ENT_QUOTES | ENT_HTML5, "UTF-8");
+	$content = htmlspecialchars($content, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, "UTF-8");
+	$content = preg_split('/\r\n|\r|\n/', $content);
+	$_content = "";
 	foreach ($content as $val) {
 		if (!empty($val)) {
 			$_content .= "<p>" . $val . "</p>";
 		}
 	}
 	return $_content;
+}
+
+function safeHtmlContent($content)
+{
+	$content = htmlspecialchars_decode((string) $content, ENT_QUOTES);
+	if (!class_exists("HTMLPurifier") || !class_exists("HTMLPurifier_Config")) {
+		return htmlspecialchars($content, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, "UTF-8");
+	}
+	static $purifier;
+	if (!$purifier) {
+		$config = \HTMLPurifier_Config::createDefault();
+		$config->set("Cache.DefinitionImpl", null);
+		$purifier = new \HTMLPurifier($config);
+	}
+	return $purifier->purify($content);
 }
 function is_profession()
 {

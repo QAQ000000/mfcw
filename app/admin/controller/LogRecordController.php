@@ -609,7 +609,7 @@ class LogRecordController extends AdminBaseController
 		} else {
 			$detail["username"] = \think\Db::name("clients")->where("id", $detail["uid"])->value("username");
 		}
-		$detail["content"] = htmlspecialchars_decode($detail["content"]);
+		$detail["content"] = safeHtmlContent($detail["content"]);
 		return jsonrule(["status" => 200, "msg" => lang("SUCCESS MESSAGE"), "detail" => $detail]);
 	}
 	public function getWechatLog()
@@ -839,7 +839,7 @@ class LogRecordController extends AdminBaseController
 		})->order($orderby, $sorting)->page($page)->limit($limit)->select()->toArray();
 		if ($list) {
 			foreach ($list as &$item) {
-				$item["content"] = htmlspecialchars_decode($item["content"]);
+				$item["content"] = safeHtmlContent($item["content"]);
 				$item["create_time"] = date("Y-m-d H:i:s", $item["create_time"]);
 				if ($item["attachment"]) {
 					$attachment = explode(",", $item["attachment"]);

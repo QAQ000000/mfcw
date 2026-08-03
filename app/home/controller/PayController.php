@@ -49,27 +49,35 @@ class PayController extends CommonController
 		$params = $this->request->only(["limit", "page", "order", "sort", "keywords"]);
 		$page = !empty($params["page"]) ? intval($params["page"]) : config("page");
 		$limit = !empty($params["limit"]) ? intval($params["limit"]) : config("limit");
-		$order = !empty($params["order"]) ? trim($params["order"]) : "trans_id";
-		$sort = !empty($params["sort"]) ? trim($params["sort"]) : "DESC";
-		$keywords = isset($params["keywords"]) && !empty($params["keywords"]) ? $params["keywords"] : "";
-		if (!in_array($order, ["trans_id", "amount_in", "pay_time", "type", "gateway"])) {
+		$order = !empty($params["order"]) && is_string($params["order"]) ? trim($params["order"]) : "trans_id";
+		$sort = !empty($params["sort"]) && is_string($params["sort"]) ? strtoupper(trim($params["sort"])) : "DESC";
+		$keywords = isset($params["keywords"]) && is_scalar($params["keywords"]) ? trim((string) $params["keywords"]) : "";
+		if (!in_array($order, ["trans_id", "amount_in", "pay_time", "type", "gateway"], true)) {
 			return jsons(["status" => 400, "msg" => lang("排序字段错误")]);
+		}
+		if (!in_array($sort, ["ASC", "DESC"], true)) {
+			return jsons(["status" => 400, "msg" => lang("排序规则错误")]);
 		}
 		$data = [];
 		$credit = \think\Db::name("clients")->where("id", $uid)->value("credit");
 		$currency_id = priorityCurrency($uid);
-		$where = "1=1";
-		if (isset($keywords[0])) {
-			$arr = [];
+		$gateway_names = [];
+		if ($keywords !== "") {
 			foreach (gateway_list() as $v) {
 				if (strpos($v["title"], $keywords) !== false) {
-					$arr[] = "`gateway` = \"" . $v["name"] . "\"";
+					$gateway_names[] = $v["name"];
 				}
 			}
-			$arr[] = "`a`.`trans_id` like \"%" . $keywords . "%\"";
-			$arr[] = "`a`.`amount_in` like \"%" . $keywords . "%\"";
-			$where = implode(" OR ", $arr);
 		}
+		$keyword_where = function (\think\db\Query $query) use($keywords, $gateway_names) {
+			if ($keywords === "") {
+				return;
+			}
+			$query->where("a.trans_id", "like", "%" . $keywords . "%")->whereOr("a.amount_in", "like", "%" . $keywords . "%");
+			if (!empty($gateway_names)) {
+				$query->whereOr("a.gateway", "in", $gateway_names);
+			}
+		};
 		$currency = \think\Db::name("currencies")->field("id,prefix,suffix,code")->where("id", $currency_id)->find();
 		$data["currency"] = $currency;
 		if (!!$this->checkEnabled()) {
@@ -80,7 +88,7 @@ class PayController extends CommonController
 		} else {
 			$data["allow_recharge"] = 0;
 		}
-		$count = \think\Db::name("accounts")->alias("a")->field("a.trans_id,a.amount_in,a.pay_time,a.gateway")->where("a.uid", $uid)->where("a.delete_time", 0)->count();
+		$count = \think\Db::name("accounts")->alias("a")->field("a.trans_id,a.amount_in,a.pay_time,a.gateway")->where("a.uid", $uid)->where("a.delete_time", 0)->where($keyword_where)->count();
 		$accounts = \think\Db::name("accounts")->alias("a")->field("a.trans_id,a.amount_in,a.pay_time,a.gateway,a.amount_out,a.invoice_id,a.description")->withAttr("amount_in", function ($value, $data) use($currency) {
 			if ($data["amount_out"] > 0) {
 				return "-" . $data["amount_out"] . $currency["suffix"];
@@ -93,7 +101,7 @@ class PayController extends CommonController
 					return $v["title"];
 				}
 			}
-		})->whereRaw($where)->where("a.uid", $uid)->where("a.delete_time", 0)->limit($limit)->page($page)->order($order, $sort)->select()->toArray();
+		})->where($keyword_where)->where("a.uid", $uid)->where("a.delete_time", 0)->limit($limit)->page($page)->order($order, $sort)->select()->toArray();
 		$accounts_filter = [];
 		foreach ($accounts as $key => $account) {
 			$invoice_id = $account["invoice_id"];
@@ -260,11 +268,11 @@ class PayController extends CommonController
 			return jsons(["status" => "406", "msg" => "账单id不能为空"]);
 		}
 		$invoice_data = \think\Db::name("invoices")->where("id", $invoiceid)->where("uid", $uid)->find();
-		if ($invoice_data["status"] == "Paid" || $invoice_data["total"] == 0) {
-			return jsons(["status" => "406", "msg" => "账单已支付"]);
-		}
 		if (empty($invoice_data) || !empty($invoice_data["delete_time"])) {
 			return jsons(["status" => "406", "msg" => "账单已过期过或未找到"]);
+		}
+		if ($invoice_data["status"] == "Paid" || $invoice_data["total"] == 0) {
+			return jsons(["status" => "406", "msg" => "账单已支付"]);
 		}
 		$currency = getUserCurrency($uid);
 		$prefix = $currency["prefix"];
@@ -300,9 +308,12 @@ class PayController extends CommonController
 	public function useCreditPage()
 	{
 		$params = $this->request->param();
-		$invoice_id = $params["invoiceid"];
-		$invoice = \think\Db::name("invoices")->where("id", $invoice_id)->where("delete_time", 0)->find();
 		$uid = \request()->uid;
+		$invoice_id = intval($params["invoiceid"] ?? 0);
+		$invoice = \think\Db::name("invoices")->where("id", $invoice_id)->where("uid", $uid)->where("delete_time", 0)->where("is_delete", 0)->find();
+		if (empty($invoice)) {
+			return jsons(["status" => 404, "msg" => "账单未找到"]);
+		}
 		$curerncy_id = priorityCurrency($uid);
 		$currency = (new \app\common\logic\Currencies())->getCurrencies("id,code,prefix,suffix", $curerncy_id)[0];
 		$credit = \think\Db::name("clients")->where("id", $uid)->value("credit");
@@ -631,9 +642,17 @@ class PayController extends CommonController
 	public function changePaymt(\think\Request $request)
 	{
 		$param = $request->param();
-		$invoiceid = $param["invoiceid"];
-		$paymt = $param["paymt"];
-		\think\Db::name("invoices")->where("id", $invoiceid)->update(["use_credit_limit" => $paymt]);
+		$uid = intval($request->uid);
+		$invoiceid = intval($param["invoiceid"] ?? 0);
+		$paymt = isset($param["paymt"]) && in_array((string) $param["paymt"], ["0", "1"], true) ? intval($param["paymt"]) : null;
+		if (empty($invoiceid) || $paymt === null) {
+			return jsons(["status" => 400, "msg" => "参数错误"]);
+		}
+		$invoice = \think\Db::name("invoices")->field("id")->where("id", $invoiceid)->where("uid", $uid)->where("delete_time", 0)->where("is_delete", 0)->where("status", "Unpaid")->find();
+		if (empty($invoice)) {
+			return jsons(["status" => 404, "msg" => "账单未找到或状态不允许修改"]);
+		}
+		\think\Db::name("invoices")->where("id", $invoiceid)->where("uid", $uid)->update(["use_credit_limit" => $paymt]);
 		return jsons(["status" => 200, "data" => []]);
 	}
 	public function invoicesidCreateTmp($invoice)

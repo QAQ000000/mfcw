@@ -199,27 +199,35 @@ class InvoicesController extends \app\home\controller\CommonController
 		$params = $this->request->only(["limit", "page", "order", "sort", "keywords"]);
 		$page = !empty($params["page"]) ? intval($params["page"]) : config("page");
 		$limit = !empty($params["limit"]) ? intval($params["limit"]) : config("limit");
-		$order = !empty($params["order"]) ? trim($params["order"]) : "trans_id";
-		$sort = !empty($params["sort"]) ? trim($params["sort"]) : "DESC";
-		$keywords = isset($params["keywords"]) && !empty($params["keywords"]) ? $params["keywords"] : "";
-		if (!in_array($order, ["trans_id", "amount_in", "pay_time", "type", "gateway"])) {
+		$order = !empty($params["order"]) && is_string($params["order"]) ? trim($params["order"]) : "trans_id";
+		$sort = !empty($params["sort"]) && is_string($params["sort"]) ? strtoupper(trim($params["sort"])) : "DESC";
+		$keywords = isset($params["keywords"]) && is_scalar($params["keywords"]) ? trim((string) $params["keywords"]) : "";
+		if (!in_array($order, ["trans_id", "amount_in", "pay_time", "type", "gateway"], true)) {
 			return json(["status" => 400, "msg" => "Sort field error"]);
+		}
+		if (!in_array($sort, ["ASC", "DESC"], true)) {
+			return json(["status" => 400, "msg" => "Sort direction error"]);
 		}
 		$data = [];
 		$credit = \think\Db::name("clients")->where("id", $uid)->value("credit");
 		$currency_id = priorityCurrency($uid);
-		$where = "1=1";
-		if (isset($keywords[0])) {
-			$arr = [];
+		$gateway_names = [];
+		if ($keywords !== "") {
 			foreach (gateway_list() as $v) {
 				if (strpos($v["title"], $keywords) !== false) {
-					$arr[] = "`gateway` = \"" . $v["name"] . "\"";
+					$gateway_names[] = $v["name"];
 				}
 			}
-			$arr[] = "`a`.`trans_id` like \"%" . $keywords . "%\"";
-			$arr[] = "`a`.`amount_in` like \"%" . $keywords . "%\"";
-			$where = implode(" OR ", $arr);
 		}
+		$keyword_where = function (\think\db\Query $query) use($keywords, $gateway_names) {
+			if ($keywords === "") {
+				return;
+			}
+			$query->where("a.trans_id", "like", "%" . $keywords . "%")->whereOr("a.amount_in", "like", "%" . $keywords . "%");
+			if (!empty($gateway_names)) {
+				$query->whereOr("a.gateway", "in", $gateway_names);
+			}
+		};
 		$currency = \think\Db::name("currencies")->field("id,code,prefix,suffix")->where("id", $currency_id)->find();
 		$data["currency"] = $currency;
 		if (!!$this->checkEnabled()) {
@@ -230,7 +238,7 @@ class InvoicesController extends \app\home\controller\CommonController
 		} else {
 			$data["allow_recharge"] = 0;
 		}
-		$count = \think\Db::name("accounts")->alias("a")->field("a.trans_id,a.amount_in,a.pay_time,a.gateway")->where("a.uid", $uid)->where("a.delete_time", 0)->count();
+		$count = \think\Db::name("accounts")->alias("a")->field("a.trans_id,a.amount_in,a.pay_time,a.gateway")->where("a.uid", $uid)->where("a.delete_time", 0)->where($keyword_where)->count();
 		$accounts = \think\Db::name("accounts")->alias("a")->field("a.trans_id,a.amount_in,a.pay_time,a.gateway,a.invoice_id,a.description")->withAttr("amount_in", function ($value, $data) use($currency) {
 			if ($data["amount_out"] > 0) {
 				return "-" . $data["amount_out"] . $currency["suffix"];
@@ -243,7 +251,7 @@ class InvoicesController extends \app\home\controller\CommonController
 					return $v["title"];
 				}
 			}
-		})->whereRaw($where)->where("a.uid", $uid)->where("a.delete_time", 0)->limit($limit)->page($page)->order($order, $sort)->select()->toArray();
+		})->where($keyword_where)->where("a.uid", $uid)->where("a.delete_time", 0)->limit($limit)->page($page)->order($order, $sort)->select()->toArray();
 		$accounts_filter = [];
 		foreach ($accounts as $key => $account) {
 			if (!empty($account) && is_null($account["trans_id"])) {

@@ -391,13 +391,14 @@ class HostController extends \cmf\controller\HomeBaseController
 			return json(["status" => 200, "data" => $this->redirect($download_data["locationname"], 302)]);
 			exit;
 		}
-		if (file_exists(UPLOAD_PATH_DWN . "support/" . $filename)) {
+		$download_path = \app\common\logic\Download::resolveSupportFile($filename);
+		if ($download_path !== null) {
 			\think\Db::name("downloads")->where("id", $download)->setInc("downloads");
 			\ob_clean();
-			return download(UPLOAD_PATH_DWN . "support/" . $filename, $download_data["locationname"]);
-			return json(["status" => 200, "data" => $this->download(UPLOAD_PATH_DWN . "support/" . $filename, explode("^", $filename)[1])]);
+			return download($download_path, $download_data["locationname"]);
+			return json(["status" => 200, "data" => $this->download($download_path, explode("^", $filename)[1])]);
 			exit;
-			return $this->download(UPLOAD_PATH_DWN . "support/" . $filename, $filename);
+			return $this->download($download_path, $filename);
 		} else {
 			return json(["status" => 400, "msg" => "The resource is lost"]);
 		}
@@ -734,9 +735,14 @@ class HostController extends \cmf\controller\HomeBaseController
 	}
 	public function deleteCancel($id = 0)
 	{
-		$param = $this->request->param();
+		$uid = intval($this->request->uid);
+		$id = intval($id);
+		$host = \think\Db::name("host")->field("id")->where("id", $id)->where("uid", $uid)->find();
+		if (empty($host)) {
+			return json(["status" => 404, "msg" => lang("THE_PRODUCT_WAS_NOT_FOUND")]);
+		}
 		\think\Db::name("cancel_requests")->where("relid", $id)->where("delete_time", 0)->delete();
-		active_log_final("产品 #Host ID:{$id} 取消停用请求成功", $param["uid"], 2, $id, 2);
+		active_log_final("产品 #Host ID:{$id} 取消停用请求成功", $uid, 2, $id, 2);
 		return json(["status" => 200, "msg" => llang("SUCCESS MESSAGE")]);
 	}
 	public function upgradeConfigPage()
@@ -1261,11 +1267,14 @@ class HostController extends \cmf\controller\HomeBaseController
 	public function module()
 	{
 		$param = $this->request->param();
-		$host_id = $param["id"];
-		$uid = $param["uid"];
+		$host_id = intval($param["id"] ?? 0);
+		$uid = intval($this->request->uid);
 		$host_data = \think\Db::name("host")->field("p.cancel_control")->field("o.create_time as ocreate_time,o.amount as order_amount")->field("h.id,h.orderid,h.initiative_renew,h.productid,h.serverid,h.regdate,h.domain,h.payment,p.groupid,h.promoid,
                 h.firstpaymentamount,h.amount,h.billingcycle,h.nextduedate,h.nextinvoicedate,
-                h.dedicatedip,h.assignedips,h.domainstatus,h.username,h.password,h.suspendreason,p.id as pid,               h.auto_terminate_end_cycle,h.auto_terminate_reason,h.bwusage,h.bwlimit,h.os,h.remark,h.dcimid,h.dcim_area,h.dcim_os,h.port,p.type,p.name as productname,p.pay_method as payment_type,p.config_options_upgrade,p.api_type,p.zjmf_api_id,p.upstream_price_type,p.upstream_price_value,p.upper_reaches_id,p.config_option1,p.password password_rule,g.name as groupname,o.ordernum")->alias("h")->leftJoin("products p", "p.id=h.productid")->leftJoin("product_groups g", "g.id=p.gid")->leftJoin("orders o", "o.id=h.orderid")->where("h.id", $host_id)->find();
+	                h.dedicatedip,h.assignedips,h.domainstatus,h.username,h.password,h.suspendreason,p.id as pid,               h.auto_terminate_end_cycle,h.auto_terminate_reason,h.bwusage,h.bwlimit,h.os,h.remark,h.dcimid,h.dcim_area,h.dcim_os,h.port,p.type,p.name as productname,p.pay_method as payment_type,p.config_options_upgrade,p.api_type,p.zjmf_api_id,p.upstream_price_type,p.upstream_price_value,p.upper_reaches_id,p.config_option1,p.password password_rule,g.name as groupname,o.ordernum")->alias("h")->leftJoin("products p", "p.id=h.productid")->leftJoin("product_groups g", "g.id=p.gid")->leftJoin("orders o", "o.id=h.orderid")->where("h.id", $host_id)->where("h.uid", $uid)->find();
+		if (empty($host_data)) {
+			return json(["status" => 404, "msg" => lang("THE_PRODUCT_WAS_NOT_FOUND")]);
+		}
 		if ($host_data["type"] == "ssl") {
 			return json(["status" => 400, "data" => "The host has no server module interface"]);
 		}
@@ -1412,7 +1421,7 @@ class HostController extends \cmf\controller\HomeBaseController
 			}
 		} else {
 			if ($host_data["bwlimit"] > 0) {
-				$flowpacket = \think\Db::name("dcim_flow_packet")->field("id,name,capacity,price,sale_times,stock")->where("status", 1)->whereRaw("FIND_IN_SET('{$host_data["productid"]}', allow_products)")->select()->toArray();
+				$flowpacket = \think\Db::name("dcim_flow_packet")->field("id,name,capacity,price,sale_times,stock")->where("status", 1)->whereRaw("FIND_IN_SET(:product_id, allow_products)", ["product_id" => intval($host_data["productid"])])->select()->toArray();
 				if (!empty($flowpacket)) {
 					foreach ($flowpacket as $k => $v) {
 						$flowpacket[$k]["leave"] = 1;
@@ -2126,8 +2135,8 @@ class HostController extends \cmf\controller\HomeBaseController
 			return \think\Response::create("Token verification fails, the user does not exist")->code(200);
 		} catch (\Firebase\JWT\ExpiredException $e) {
 			return \think\Response::create("Login expired")->code(200);
-		} catch (Exception $e) {
-			return \think\Response::create($e->getMessage())->code(200);
+		} catch (\Throwable $e) {
+			return \think\Response::create("Token verification failed")->code(200);
 		}
 		$pass = \think\facade\Cache::get("client_user_update_pass_" . $tmp);
 		if ($pass && $checkJwtToken["nbf"] < $pass) {

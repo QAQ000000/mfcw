@@ -204,13 +204,14 @@ class DownloadsController extends \cmf\controller\HomeBaseController
 			return json(["status" => 200, "data" => $this->redirect($download_data["locationname"], 302)]);
 			exit;
 		}
-		if (file_exists(UPLOAD_PATH_DWN . "support/" . $filename)) {
+		$download_path = \app\common\logic\Download::resolveSupportFile($filename);
+		if ($download_path !== null) {
 			\think\Db::name("downloads")->where("id", $id)->setInc("downloads");
 			\ob_clean();
-			return download(UPLOAD_PATH_DWN . "support/" . $filename, $download_data["locationname"]);
-			return json(["status" => 200, "data" => $this->download(UPLOAD_PATH_DWN . "support/" . $filename, explode("^", $filename)[1])]);
+			return download($download_path, $download_data["locationname"]);
+			return json(["status" => 200, "data" => $this->download($download_path, explode("^", $filename)[1])]);
 			exit;
-			return $this->download(UPLOAD_PATH_DWN . "support/" . $filename, $filename);
+			return $this->download($download_path, $filename);
 		} else {
 			return json(["status" => 400, "msg" => "Resources lost"]);
 		}

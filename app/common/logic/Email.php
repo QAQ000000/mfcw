@@ -679,13 +679,13 @@ class Email
 			$cron_reply_time = date("Y-m-d H:i:s", $ticket["last_reply_time"] + 3600 * configuration("cron_ticket_close_time"));
 			$priority = ["high" => "高", "low" => "低", "medium" => "中"];
 			$reply = \think\Db::name("ticket_reply")->field("content")->where("tid", $relid)->order("id", "desc")->find();
-			$ticket_content = htmlspecialchars_decode($ticket["content"], ENT_QUOTES);
+			$ticket_content = safeHtmlContent($ticket["content"]);
 			preg_match_all("/<p>(.*?)<\\/p>/", $ticket_content, $out);
 			if ($out[1][0]) {
 				$ticket_content = $out[1][0];
 				$ticket_content = preg_replace("/<\\s*img\\s+[^>]*?src\\s*=\\s*('|\\\")(.*?)\\1[^>]*?\\/?\\s*>/i", "", $ticket_content);
 			}
-			$reply_content = htmlspecialchars_decode($reply["content"], ENT_QUOTES);
+			$reply_content = safeHtmlContent($reply["content"]);
 			preg_match_all("/<p>(.*?)<\\/p>/", $reply_content, $out2);
 			if ($out2[1][0]) {
 				$reply_content = $out2[1][0];

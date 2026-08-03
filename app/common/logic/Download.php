@@ -4,6 +4,28 @@ namespace app\common\logic;
 
 class Download
 {
+	public static function resolveFileInDirectory($baseDirectory, $filename)
+	{
+		if (!is_string($filename) || $filename === "" || strpos($filename, "\0") !== false || strpos($filename, "/") !== false || strpos($filename, "\\") !== false || basename($filename) !== $filename) {
+			return null;
+		}
+		$base = realpath($baseDirectory);
+		if ($base === false) {
+			return null;
+		}
+		$path = realpath($base . DIRECTORY_SEPARATOR . $filename);
+		$prefix = rtrim($base, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+		if ($path === false || !is_file($path) || strncmp($path, $prefix, strlen($prefix)) !== 0) {
+			return null;
+		}
+		return $path;
+	}
+
+	public static function resolveSupportFile($filename)
+	{
+		return self::resolveFileInDirectory(UPLOAD_PATH_DWN . "support/", $filename);
+	}
+
 	public function getCatesDownload($cate_id)
 	{
 		$cate_data = \app\common\model\DownloadcatsModel::where("parentid", $cate_id)->order("sort", "asc")->select();
@@ -171,7 +193,10 @@ class Download
 	{
 		if (!empty($fileArr) && is_array($fileArr)) {
 			foreach ($fileArr as $file) {
-				@unlink(UPLOAD_PATH_DWN . "support/" . $file);
+				$path = self::resolveSupportFile($file);
+				if ($path !== null) {
+					@unlink($path);
+				}
 			}
 		}
 	}

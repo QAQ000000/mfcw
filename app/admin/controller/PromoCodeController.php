@@ -218,7 +218,8 @@ class PromoCodeController extends AdminBaseController
 		$promo_code["upgrade_options"] = [];
 		if (!empty($promo_code["upgrades"])) {
 			if (!empty($promo_code["upgrade_config"])) {
-				$upgrade_config = unserialize($promo_code["upgrade_config"]);
+				$upgrade_config = @unserialize($promo_code["upgrade_config"], ["allowed_classes" => false]);
+				$upgrade_config = is_array($upgrade_config) ? $upgrade_config : [];
 				$promo_code["upgrade_type"] = $upgrade_config["upgrade_type"];
 				$promo_code["upgrade_value"] = $upgrade_config["upgrade_value"];
 				$promo_code["upgrade_value_type"] = $upgrade_config["upgrade_value_type"];
@@ -481,7 +482,8 @@ class PromoCodeController extends AdminBaseController
 			$data["recurfor"] = (!empty($data["recurring"]) || !isset($data["recurring"]) && !empty($code_info["recurring"])) && !empty($params["recurfor"]) ? intval($params["recurfor"]) : 0;
 		}
 		if (!empty($data["upgrades"]) || !isset($params["upgrades"]) && !empty($code_info["upgrades"])) {
-			$old_upgrades = unserialize($code_info["upgrade_config"]);
+			$old_upgrades = @unserialize($code_info["upgrade_config"], ["allowed_classes" => false]);
+			$old_upgrades = is_array($old_upgrades) ? $old_upgrades : [];
 			$upgrades = ["upgrade_type" => "", "upgrade_value" => 0.0, "upgrade_value_type" => "percent", "upgrade_options" => []];
 			if (isset($params["upgrade_type"])) {
 				if (!empty($params["upgrade_type"]) && in_array($params["upgrade_type"], ["product", "option"])) {

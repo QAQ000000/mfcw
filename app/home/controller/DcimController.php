@@ -115,7 +115,7 @@ class DcimController extends CommonController
 				$result["msg"] = lang("DCIM_HOST_BWLIMIT");
 				return json($result);
 			}
-			$flow_packet = \think\Db::name("dcim_flow_packet")->where("id", $fid)->where("status", 1)->whereRaw("FIND_IN_SET('{$host["productid"]}', allow_products)")->find();
+			$flow_packet = \think\Db::name("dcim_flow_packet")->where("id", $fid)->where("status", 1)->whereRaw("FIND_IN_SET(:product_id, allow_products)", ["product_id" => intval($host["productid"])])->find();
 			if (empty($flow_packet)) {
 				$result["status"] = 400;
 				$result["msg"] = lang("DCIM_GET_UPSTREAM_HEADER_ERROR");

@@ -402,7 +402,7 @@ class TicketController extends CommonController
 		}, explode(",", $ticket["attachment"])) : [], "time" => $ticket["create_time"], "format_time" => date("Y-m-d H:i:s", $ticket["create_time"])];
 		$list[0]["real_name"] = "";
 		if ($ticket["admin_id"] > 0) {
-			$list[0]["content"] = htmlspecialchars_decode($ticket["content"]);
+			$list[0]["content"] = safeHtmlContent($ticket["content"]);
 			$list[0]["user"] = $ticket["admin"];
 			$list[0]["user_type"] = lang("ADMIN");
 			$tmp = \think\Db::name("user")->find($list[0]["admin_id"]);
@@ -430,7 +430,7 @@ class TicketController extends CommonController
 			$v["time"] = $v["create_time"];
 			$v["format_time"] = date("Y-m-d H:i:s", $v["create_time"]);
 			if (!empty($v["admin"])) {
-				$v["content"] = htmlspecialchars_decode($v["content"]);
+				$v["content"] = safeHtmlContent($v["content"]);
 				$v["user_type"] = lang("ADMIN");
 				$v["user"] = $v["admin"];
 				$v["realname"] = "";
@@ -462,7 +462,7 @@ class TicketController extends CommonController
 			$v["format_time"] = date("Y-m-d H:i:s", $v["create_time"]);
 			$v["realname"] = "";
 			if ($v["admin_id"] > 0) {
-				$v["content"] = htmlspecialchars_decode($v["content"]);
+				$v["content"] = safeHtmlContent($v["content"]);
 				$v["user_type"] = lang("ADMIN");
 				$v["user"] = $v["admin"];
 				$tmp = \think\Db::name("user")->find($v["admin_id"]);
