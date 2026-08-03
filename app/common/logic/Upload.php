@@ -97,7 +97,14 @@ class Upload
 		$detectedMime = self::detectMime($path);
 		$blockedMimes = [
 			"text/html",
+			"text/xml",
+			"text/javascript",
+			"application/xml",
 			"application/xhtml+xml",
+			"application/javascript",
+			"application/x-javascript",
+			"image/svg",
+			"image/svg+xml",
 			"application/x-httpd-php",
 			"application/x-php",
 			"text/x-php",
@@ -133,7 +140,7 @@ class Upload
 		if ($lowerName === ".htaccess" || $lowerName === ".user.ini") {
 			return false;
 		}
-		return !preg_match('/\.(?:php\d*|phtml?|pht|phar|inc|asp|aspx|asa|cer|jsp|jspx|jsw|jsv|cfm|cfc|cgi|pl|py|sh|bash|zsh|exe|dll|com|bat|cmd|msi)(?:\.|$)/i', $name);
+		return !preg_match('/\.(?:php\d*|phtml?|pht|phar|inc|asp|aspx|asa|cer|jsp|jspx|js|mjs|jsw|jsv|html?|shtml?|xhtml|svgz?|xml|xsl|xslt|stm|cfm|cfc|cgi|pl|py|sh|bash|zsh|exe|dll|com|bat|cmd|msi)(?:\.|$)/i', $name);
 	}
 	private static function detectMime($path)
 	{
@@ -183,7 +190,7 @@ class Upload
 			$data = ["image" => $file];
 		}
 		if ($is_file) {
-			$validate = ["size" => 52428800];
+			$validate = ["size" => 52428800, "ext" => "png,jpg,jpeg,gif"];
 			$info = $file->validate($validate);
 			if (!$info) {
 				$result["status"] = 406;

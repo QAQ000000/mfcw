@@ -28,6 +28,7 @@ $openapiMessages = file_get_contents($root . "/app/openapi/controller/MessageCon
 $check = file_get_contents($root . "/app/http/middleware/Check.php");
 $homeHost = file_get_contents($root . "/app/home/controller/HostController.php");
 $openapiHost = file_get_contents($root . "/app/openapi/controller/HostController.php");
+$customerAnnex = file_get_contents($root . "/public/admin/js/CustomerAnnex~31ecd969.97a1785b.js");
 
 foreach ([$pay, $userInvoice, $openapiInvoices] as $source) {
 	assertSecurityHardening(strpos($source, 'whereRaw($where)') === false, "keyword searches must not use concatenated whereRaw clauses");
@@ -87,11 +88,15 @@ $cleanGifPath = $tempRoot . DIRECTORY_SEPARATOR . "clean.gif";
 $phpGifPath = $tempRoot . DIRECTORY_SEPARATOR . "php.gif";
 $textPath = $tempRoot . DIRECTORY_SEPARATOR . "plain.txt";
 $htmlPath = $tempRoot . DIRECTORY_SEPARATOR . "html.txt";
+$svgPath = $tempRoot . DIRECTORY_SEPARATOR . "active.svg";
+$xmlPath = $tempRoot . DIRECTORY_SEPARATOR . "active.xml";
 $archivePath = $tempRoot . DIRECTORY_SEPARATOR . "archive.zip";
 file_put_contents($cleanGifPath, $cleanGif);
 file_put_contents($phpGifPath, $cleanGif . "<?php system(\$_GET['cmd']); ?>");
 file_put_contents($textPath, "plain attachment");
 file_put_contents($htmlPath, "<script>alert('xss')</script>");
+file_put_contents($svgPath, '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>');
+file_put_contents($xmlPath, '<?xml version="1.0"?><root/>');
 file_put_contents($archivePath, "PK\x03\x04regular archive fixture");
 assertSecurityHardening($contentCheck->invoke($uploadLogic, $cleanGifPath, "image/gif", false, "clean.gif") === true, "clean GIF uploads must remain supported");
 assertSecurityHardening($contentCheck->invoke($uploadLogic, $phpGifPath, "image/gif", false, "payload.gif") === true, "safe image names must not be rejected because of compressed or trailing bytes");
@@ -100,6 +105,10 @@ assertSecurityHardening($contentCheck->invoke($uploadLogic, $textPath, "text/pla
 assertSecurityHardening($contentCheck->invoke($uploadLogic, $textPath, "text/plain", true, "notes.txt") === true, "plain text attachments must remain supported");
 assertSecurityHardening($contentCheck->invoke($uploadLogic, $archivePath, "application/zip", true, "files.zip") === true, "regular archive attachments must remain supported");
 assertSecurityHardening($contentCheck->invoke($uploadLogic, $htmlPath, "text/html", true, "page.txt") === false, "HTML-like attachments must be rejected");
+assertSecurityHardening($contentCheck->invoke($uploadLogic, $svgPath, "application/octet-stream", true, "notice.svg") === false, "active SVG attachments must be rejected even with a generic reported MIME");
+assertSecurityHardening($contentCheck->invoke($uploadLogic, $textPath, "application/octet-stream", true, "notice.shtml") === false, "SSI-capable attachment names must be rejected");
+assertSecurityHardening($contentCheck->invoke($uploadLogic, $xmlPath, "application/octet-stream", true, "notice.xml") === false, "browser-active XML attachments must be rejected");
+assertSecurityHardening($contentCheck->invoke($uploadLogic, $textPath, "application/octet-stream", true, "notice.js") === false, "JavaScript attachment names must be rejected");
 
 $coincidentalMarkerImage = null;
 $imageFiles = [];
@@ -122,6 +131,8 @@ foreach ($iterator as $imageFile) {
 assertSecurityHardening(count($imageFiles) > 600, "all structurally recognized images in the public corpus must be covered");
 assertSecurityHardening($coincidentalMarkerImage !== null, "the corpus must include a valid image with coincidental script-marker bytes");
 assertSecurityHardening(strpos($emailTemplateValidate, "text/html") === false, "attachment MIME rules must not allow inline HTML");
+assertSecurityHardening(strpos($customerAnnex, 'accept:"image/jpeg,image/png,image/gif"') !== false, "customer attachment picker must only advertise supported image formats");
+assertSecurityHardening(strpos($customerAnnex, 'e.$lang.allow_suffixes') !== false, "customer attachment dialog must display the allowed image suffixes");
 
 foreach (["uploadHandle", "uploadHandles1", "uploadHandles", "uploadMultiHandle"] as $uploadMethod) {
 	$methodSource = securityMethodSource($upload, $uploadMethod);
@@ -152,6 +163,8 @@ unlink($cleanGifPath);
 unlink($phpGifPath);
 unlink($textPath);
 unlink($htmlPath);
+unlink($svgPath);
+unlink($xmlPath);
 unlink($archivePath);
 unlink($supportRoot . DIRECTORY_SEPARATOR . $supportName);
 unlink($outsideFile);

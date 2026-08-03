@@ -68,8 +68,10 @@ try {
 	$upload = new \app\common\logic\Upload($targetDirectory);
 	$results = [
 		"uploadHandles1" => $upload->uploadHandles1($makeFile("shell.php", base64_decode("PD9waHAgZWNobyAxOyA/Pg==")), true),
+		"activeSvg" => $upload->uploadHandles1($makeFile("notice.svg", '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>'), true),
+		"activeShtml" => $upload->uploadHandles1($makeFile("notice.shtml", '<!--#exec cmd="id" -->'), true),
 		"uploadHandles" => $upload->uploadHandles($makeFile("avatar.php.jpg", $gifPayload), true),
-		"regularText" => $upload->uploadHandles1($makeFile("notes.txt", "plain attachment"), true),
+		"regularImage" => $upload->uploadHandles1($makeFile("notice.gif", $gifPayload), true),
 		"regularArchive" => $upload->uploadHandles($makeFile("files.zip", "PK\x03\x04regular archive"), true),
 		"uploadHandle" => $upload->uploadHandle($makeFile("payload.gif", $gifPayload), false),
 		"uploadMultiHandle" => $upload->uploadMultiHandle([$makeFile("payload.gif", $gifPayload)]),
@@ -77,8 +79,10 @@ try {
 	];
 
 	assertUploadChain($results["uploadHandles1"]["status"] !== 200, "uploadHandles1 must reject executable attachments");
+	assertUploadChain($results["activeSvg"]["status"] !== 200, "uploadHandles1 must reject active SVG content");
+	assertUploadChain($results["activeShtml"]["status"] !== 200, "uploadHandles1 must reject SSI-capable files");
 	assertUploadChain($results["uploadHandles"]["status"] !== 200, "uploadHandles must reject dangerous compound names");
-	assertUploadChain($results["regularText"]["status"] === 200, "uploadHandles1 must keep regular text attachments working");
+	assertUploadChain($results["regularImage"]["status"] === 200, "uploadHandles1 must keep common image uploads working");
 	assertUploadChain($results["regularArchive"]["status"] === 200, "uploadHandles must keep regular archives working");
 	foreach (["uploadHandle", "uploadMultiHandle"] as $method) {
 		assertUploadChain($results[$method]["status"] === 200, $method . " must accept a valid GIF with a safe filename");
