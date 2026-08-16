@@ -397,10 +397,20 @@ class Invoices
 				}
 				$productid = \think\Db::name("host")->where("id", $relid)->value("productid");
 				if (get_product_condition($productid) == "payment") {
-					if (configuration("shd_allow_auto_create_queue")) {
-						\app\queue\job\AutoCreate::push(["hid" => $relid, "is_admin" => $this->is_admin, "ip" => $ip]);
+					$auto_create_data = ["hid" => $relid, "is_admin" => $this->is_admin, "ip" => $ip];
+					if ($host["api_type"] == "zjmf_api") {
+						try {
+							$queue_result = \app\queue\job\AutoCreate::push($auto_create_data);
+						} catch (\Throwable $e) {
+							$queue_result = false;
+						}
+						if ($queue_result === false) {
+							$curl_multi_data[count($curl_multi_data)] = ["url" => "async_create", "data" => $auto_create_data];
+						}
+					} elseif (configuration("shd_allow_auto_create_queue")) {
+						\app\queue\job\AutoCreate::push($auto_create_data);
 					} else {
-						$curl_multi_data[count($curl_multi_data)] = ["url" => "async_create", "data" => ["hid" => $relid, "is_admin" => $this->is_admin, "ip" => $ip]];
+						$curl_multi_data[count($curl_multi_data)] = ["url" => "async_create", "data" => $auto_create_data];
 					}
 				}
 				if ($host["domainstatus"] == "Suspended") {

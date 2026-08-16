@@ -11,7 +11,7 @@ class AutoCreate extends \app\queue\common\JobCommon
 			$job->delete();
 			$this->handle($data);
 		} catch (\Throwable $e) {
-			self::later(10, $data);
+			self::later($data, 10);
 		}
 	}
 	/**
