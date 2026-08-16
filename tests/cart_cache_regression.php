@@ -21,46 +21,9 @@ if (!function_exists("active_log_final")) {
 	}
 }
 
-if (!function_exists("cache")) {
-	function cache($name, $value = "__cart_cache_get__", $options = null)
-	{
-		static $values = [];
-		if (func_num_args() === 1) {
-			return $values[$name] ?? null;
-		}
-		if ($value === null) {
-			unset($values[$name]);
-			return true;
-		}
-		$values[$name] = $value;
-		return true;
-	}
-}
-
-class CartSyncQueueJobStub
-{
-	public static $pushes = [];
-	public static $failure = null;
-
-	public static function push($data)
-	{
-		if (self::$failure instanceof \Throwable) {
-			throw self::$failure;
-		}
-		self::$pushes[] = $data;
-	}
-}
-class_alias("CartSyncQueueJobStub", "app\\queue\\job\\SyncProduct");
-
 class TestableCartProductLogic extends \app\common\logic\Product
 {
 	public $existingProductIds = [];
-	public $cartProductVersions = [];
-
-	protected function findCartProductVersionRow($pid)
-	{
-		return $this->cartProductVersions[intval($pid)] ?? ["id" => intval($pid), "location_version" => 1, "upstream_version" => 1];
-	}
 
 	protected function findDeletedProductIds($pids)
 	{
@@ -132,6 +95,14 @@ function sourceContains($file, $needles)
 	$source = file_get_contents($file);
 	foreach ($needles as $needle) {
 		assertTrue(strpos($source, $needle) !== false, basename($file) . " missing: " . $needle);
+	}
+}
+
+function sourceDoesNotContain($file, $needles)
+{
+	$source = file_get_contents($file);
+	foreach ($needles as $needle) {
+		assertTrue(strpos($source, $needle) === false, basename($file) . " unexpectedly contains: " . $needle);
 	}
 }
 
@@ -223,76 +194,6 @@ $lockStatus = 1;
 exec("flock -n " . escapeshellarg($catalog["path"]) . " -c true", $lockOutput, $lockStatus);
 assertTrue($lockStatus === 0, "the catalog critical section must reopen after release");
 
-assertTrue($logic->queueProductSyncForCart(501) === true, "cart sync must enqueue without waiting for the supplier");
-assertTrue(count(CartSyncQueueJobStub::$pushes) === 1, "cart sync must enqueue one job");
-assertTrue(CartSyncQueueJobStub::$pushes[0]["pid"] === 501, "cart sync jobs must contain the local product ID");
-assertTrue(CartSyncQueueJobStub::$pushes[0]["requested_version"] === "1", "cart sync jobs must retain the requested product version");
-assertTrue(strlen(CartSyncQueueJobStub::$pushes[0]["token"]) >= 32, "cart sync jobs must carry a unique generation token");
-assertTrue($logic->queueProductSyncForCart(501) === true, "duplicate cart sync requests must use the queued marker");
-assertTrue(count(CartSyncQueueJobStub::$pushes) === 1, "duplicate cart requests must not enqueue duplicate jobs");
-$queuedState = $logic->getCartProductSyncState(501);
-assertTrue($queuedState["status"] === "queued", "new cart sync state must be queued");
-assertTrue($logic->beginCartProductSync(501, "obsolete-token") === false, "obsolete jobs must fail before contacting the supplier");
-assertTrue($logic->beginCartProductSync(501, $queuedState["token"]) === true, "the current job token must enter the running state");
-assertTrue($logic->beginCartProductSync(501, $queuedState["token"]) === false, "the same token must not start two workers");
-$crashedState = $logic->getCartProductSyncState(501);
-$crashedState["updated_at"] = time() - 31;
-cache("cart_product_sync_state_501", $crashedState, 172800);
-assertTrue($logic->beginCartProductSync(501, $queuedState["token"]) === true, "a crashed running attempt must be reclaimable by the queue retry");
-assertTrue($logic->markCartProductSyncQueued(501, $queuedState["token"]) === true, "a failed current attempt must return to the queued state");
-$staleState = $logic->getCartProductSyncState(501);
-$staleState["updated_at"] = time() - 901;
-cache("cart_product_sync_state_501", $staleState, 172800);
-assertTrue($logic->queueProductSyncForCart(501) === true, "a stale queued job must be replaced by a new generation");
-$replacementState = $logic->getCartProductSyncState(501);
-assertTrue($replacementState["token"] !== $queuedState["token"], "stale queue recovery must rotate the generation token");
-assertTrue($logic->beginCartProductSync(501, $queuedState["token"]) === false, "a replaced physical job must not call the supplier");
-assertTrue(count(CartSyncQueueJobStub::$pushes) === 2, "stale recovery must enqueue exactly one replacement job");
-$freshSuccessState = [
-	"token" => "fresh-success",
-	"status" => "success",
-	"requested_version" => "4",
-	"completed_version" => "4",
-	"updated_at" => time(),
-];
-assertTrue(
-	\app\common\logic\Product::isCartProductSyncSuccessFresh($freshSuccessState, "4", $freshSuccessState["updated_at"] + 15),
-	"a matching supplier sync may be reused during the 15-second freshness window"
-);
-assertTrue(
-	!\app\common\logic\Product::isCartProductSyncSuccessFresh($freshSuccessState, "5", $freshSuccessState["updated_at"]),
-	"a completed sync must not be reused after the local product version changes"
-);
-assertTrue(
-	!\app\common\logic\Product::isCartProductSyncSuccessFresh($freshSuccessState, "4", $freshSuccessState["updated_at"] + 16),
-	"a completed sync must not be reused after the 15-second freshness window"
-);
-$logic->cartProductVersions[504] = ["id" => 504, "location_version" => 4, "upstream_version" => 9];
-cache("cart_product_sync_state_504", $freshSuccessState, 172800);
-$pushCount = count(CartSyncQueueJobStub::$pushes);
-assertTrue($logic->queueProductSyncForCart(504) === true, "a fresh matching success state must remain reusable");
-assertTrue(count(CartSyncQueueJobStub::$pushes) === $pushCount, "a fresh matching success state must not enqueue another job");
-$logic->cartProductVersions[504]["location_version"] = 5;
-assertTrue($logic->queueProductSyncForCart(504) === true, "a success state for an obsolete version must enqueue a refresh");
-assertTrue(count(CartSyncQueueJobStub::$pushes) === $pushCount + 1, "a version mismatch must create exactly one replacement job");
-$replacementSuccessState = $logic->getCartProductSyncState(504);
-assertTrue($replacementSuccessState["status"] === "queued", "a version mismatch must rotate the success state back to queued");
-assertTrue($replacementSuccessState["requested_version"] === "5", "the replacement job must target the current local version");
-$staleSuccessState = $freshSuccessState;
-$staleSuccessState["updated_at"] = time() - 16;
-$logic->cartProductVersions[505] = ["id" => 505, "location_version" => 4, "upstream_version" => 9];
-cache("cart_product_sync_state_505", $staleSuccessState, 172800);
-$pushCount = count(CartSyncQueueJobStub::$pushes);
-assertTrue($logic->queueProductSyncForCart(505) === true, "an expired success state must enqueue a refresh");
-assertTrue(count(CartSyncQueueJobStub::$pushes) === $pushCount + 1, "an expired success state must create exactly one replacement job");
-assertTrue($logic->getCartProductSyncState(505)["status"] === "queued", "an expired success state must return to queued");
-CartSyncQueueJobStub::$failure = new \RuntimeException("forced queue failure");
-assertTrue($logic->queueProductSyncForCart(502) === false, "queue insertion failures must degrade without escaping to the cart");
-assertTrue($logic->syncProductForCart(["pid" => 503])["status"] === 200, "legacy cart sync callers must keep using local data when enqueue fails");
-CartSyncQueueJobStub::$failure = null;
-$failedState = $logic->getCartProductSyncState(502);
-assertTrue($failedState["status"] === "failed", "failed enqueue attempts must retain a visible failure state");
-
 $failingCronCache = new FailingCronCacheProductLogic();
 $previousErrorLog = ini_get("error_log");
 ini_set("error_log", $testRoot . DIRECTORY_SEPARATOR . "error.log");
@@ -302,6 +203,25 @@ assertTrue($failingCronCache->updateAttempts === 1, "cron must attempt a cache r
 assertTrue($failingCronCache->invalidateAttempts === 1, "cron must attempt best-effort invalidation after rebuild failure");
 
 $root = dirname(__DIR__);
+sourceContains($root . "/app/home/controller/CartController.php", [
+	'"timeout" => 2',
+	'(new \\app\\common\\logic\\Product())->syncProduct($param);',
+]);
+sourceDoesNotContain($root . "/app/home/controller/CartController.php", [
+	'queueProductSyncForCart',
+	'syncProductForCart',
+	'validateCartProductSnapshot',
+	'supplier_version',
+]);
+sourceDoesNotContain($root . "/app/common/logic/Shop.php", [
+	'validateCartProductSnapshot',
+	'supplier_version',
+]);
+sourceDoesNotContain($root . "/app/openapi/controller/CartController.php", [
+	'queueProductSyncForCart',
+	'validateCartProductSnapshot',
+	'supplier_version',
+]);
 sourceContains($root . "/app/common/logic/Product.php", [
 	"public function invalidateCache",
 	"return clearCartIndexResponseCache() === true;",
@@ -329,10 +249,6 @@ sourceContains($root . "/app/common/logic/Product.php", [
 	'$this->markCatalogCacheDirty("catalog cache rebuild"',
 	'$this->acquireCatalogCacheLock(true);',
 	'$this->syncProductUnlocked($param);',
-		'public function queueProductSyncForCart($pid)',
-		'public static function isCartProductSyncSuccessFresh($state, $currentVersion, $now = null)',
-		'public function syncLegacySupplierOrderSnapshot($pid)',
-		'\\app\\queue\\job\\SyncProduct::push(["pid" => $pid, "token" => $token, "requested_version" => $requested_version]);',
 	'$this->refreshCronProductCache($updated_product_ids, $api_name);',
 	"} finally {",
 ]);
@@ -371,24 +287,8 @@ assertTrue(
 preg_match('/public function refreshInventoryCache\(.*?private function normalizeProductIds/s', $productSource, $inventoryMethod);
 assertTrue(strpos($inventoryMethod[0], '$this->acquireCatalogCacheLock(true)') !== false, "inventory cache refreshes must never delay checkout while waiting for a catalog rebuild");
 preg_match('/public function syncProductForCart\(.*?protected function acquireCartSyncLock/s', $productSource, $cartSyncMethod);
-assertTrue(strpos($cartSyncMethod[0], '$this->queueProductSyncForCart($pid)') !== false, "legacy cart sync callers must enqueue the refresh");
-assertTrue(strpos($cartSyncMethod[0], '$this->syncProductUnlocked($param)') === false, "cart sync callers must not contact the supplier in the request");
-sourceContains($root . "/app/home/controller/CartController.php", [
-	'$product_logic->queueProductSyncForCart($pid);',
-	'$product["supplier_version"] = $supplier_version;',
-	'validateCartProductSnapshot($cartProduct["pid"], $cartProduct["supplier_version"] ?? null)',
-	'syncLegacySupplierOrderSnapshot($pid)',
-	'$pos_param["cart_data"]["supplier_version"] = $storedCartProduct["supplier_version"]',
-]);
-assertTrue(strpos(file_get_contents($root . "/app/home/controller/CartController.php"), '"timeout" => 1, "page_type" => "set_config_page"') === false, "the cart request must not wait one second for a supplier response");
-	sourceContains($root . "/app/queue/job/SyncProduct.php", [
-		'"timeout" => 5,',
-		'"page_type" => "cart_queue",',
-		'$job->release(15);',
-		'$logic->beginCartProductSync($pid, $token)',
-		'$logic->completeCartProductSync($pid, $token, false);',
-		'return (new \\app\\common\\logic\\Product())->syncProduct($param);',
-	]);
+assertTrue(substr_count($cartSyncMethod[0], 'cache($success_key) || cache($failure_key)') >= 2, "cart sync markers must be checked again after acquiring the PID lock");
+assertTrue(strpos($cartSyncMethod[0], '$this->syncProductUnlocked($param)') !== false, "cart sync must not reacquire its own PID lock");
 preg_match('/public function cronSyncProduct\(.*?protected function refreshCronProductCache/s', $productSource, $cronMethod);
 $dirtyPosition = strpos($cronMethod[0], '$updated_product_ids[] = $local_product["id"]');
 $writePosition = strpos($cronMethod[0], '$this->baseUpdateProduct($value, $local_product, $rate, true)');

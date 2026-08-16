@@ -12,8 +12,6 @@ function assertUpstreamSyncCompatibility($condition, $message)
 
 use app\common\logic\Product;
 
-assertUpstreamSyncCompatibility(Product::cartProductVersion(["location_version" => 7, "upstream_version" => 99]) === "7", "cart snapshots must use the downstream-visible location version");
-
 $upstreamOnly = Product::normalizeSupplierProductState([
 	"api_type" => "zjmf_api",
 	"stock_control" => 0,

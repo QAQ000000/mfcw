@@ -604,8 +604,6 @@ class Product
 		if (isset($param["page_type"])) {
 			if ($param["page_type"] == "set_config_page") {
 				$log = "购物车页面";
-			} elseif ($param["page_type"] == "cart_queue") {
-				$log = "购物车异步刷新";
 			} elseif ($param["page_type"] == "edit_product") {
 				$log = "保存商品";
 			}
@@ -678,288 +676,32 @@ class Product
 		if ($pid <= 0) {
 			return ["status" => 400, "msg" => "商品不存在"];
 		}
-		if ($this->queueProductSyncForCart($pid)) {
-			return ["status" => 200, "msg" => "商品数据将在后台刷新"];
+		$success_key = "cart_product_sync_success_" . $pid;
+		$failure_key = "cart_product_sync_failure_" . $pid;
+		if (cache($success_key) || cache($failure_key)) {
+			return ["status" => 200, "msg" => "使用最近同步的商品数据"];
 		}
-		return ["status" => 200, "msg" => "后台刷新暂不可用，已使用本地数据"];
-	}
-	public function queueProductSyncForCart($pid)
-	{
-		$pid = intval($pid);
-		if ($pid <= 0) {
-			return false;
-		}
-		$lock = $this->acquireFileLock("cart-sync-enqueue", "product-" . $pid, 10, true);
+		$timeout = max(1, floatval($param["timeout"] ?? 1));
+		$lock = $this->acquireCartSyncLock($pid, intval(ceil($timeout)) + 10);
 		if ($lock === false) {
-			return true;
+			return ["status" => 200, "msg" => "商品数据正在同步，已使用本地数据"];
 		}
 		try {
-			$state = $this->getCartProductSyncState($pid);
-			$updated_at = intval($state["updated_at"] ?? 0);
-			$status = (string) ($state["status"] ?? "");
-			if (in_array($status, ["queued", "running"], true) && $updated_at >= time() - 900) {
-				return true;
+			if (cache($success_key) || cache($failure_key)) {
+				return ["status" => 200, "msg" => "使用最近同步的商品数据"];
 			}
-			if ($status === "failed" && $updated_at >= time() - 60) {
-				return true;
+			$result = $this->syncProductUnlocked($param);
+			if (($result["status"] ?? 400) == 200) {
+				cache($success_key, 1, 15);
+			} else {
+				cache($failure_key, 1, 60);
 			}
-			$product = $this->findCartProductVersionRow($pid);
-			if (empty($product)) {
-				return false;
-			}
-			$requested_version = self::cartProductVersion($product);
-			if (self::isCartProductSyncSuccessFresh($state, $requested_version)) {
-				return true;
-			}
-			$token = $this->newCartProductSyncToken();
-			$state = [
-				"token" => $token,
-				"status" => "queued",
-				"requested_version" => $requested_version,
-				"completed_version" => "",
-				"updated_at" => time(),
-			];
-			$this->storeCartProductSyncState($pid, $state);
-			try {
-				\app\queue\job\SyncProduct::push(["pid" => $pid, "token" => $token, "requested_version" => $requested_version]);
-				return true;
-			} catch (\Throwable $e) {
-				$state["status"] = "failed";
-				$state["updated_at"] = time();
-				$this->storeCartProductSyncState($pid, $state);
-				try {
-					\think\facade\Log::record("Cart product sync enqueue failed for product #{$pid}: " . $e->getMessage(), "error");
-				} catch (\Throwable $logError) {
-				}
-				return false;
-			}
-		} finally {
-			$this->releaseFileLock($lock);
-		}
-	}
-	public static function cartProductVersion($product)
-	{
-		return (string) intval($product["location_version"] ?? 0);
-	}
-	public static function isCartProductSyncSuccessFresh($state, $currentVersion, $now = null)
-	{
-		if (!is_array($state) || ($state["status"] ?? "") !== "success") {
-			return false;
-		}
-		$completed_version = (string) ($state["completed_version"] ?? "");
-		$current_version = (string) $currentVersion;
-		if ($completed_version === "" || !hash_equals($current_version, $completed_version)) {
-			return false;
-		}
-		$now = $now === null ? time() : intval($now);
-		return intval($state["updated_at"] ?? 0) >= $now - 15;
-	}
-	protected function findCartProductVersionRow($pid)
-	{
-		return \think\Db::name("products")->field("id,location_version,upstream_version")->where("id", intval($pid))->find();
-	}
-	public function getCartProductSyncState($pid)
-	{
-		$state = cache($this->cartProductSyncStateKey($pid));
-		return is_array($state) ? $state : [];
-	}
-	public function beginCartProductSync($pid, $token)
-	{
-		$pid = intval($pid);
-		$lock = $this->acquireFileLock("cart-sync-enqueue", "product-" . $pid, 10, false, 2);
-		if ($lock === false) {
-			return false;
-		}
-		try {
-			$state = $this->getCartProductSyncState($pid);
-			if (!hash_equals((string) ($state["token"] ?? ""), (string) $token)) {
-				return false;
-			}
-			$status = (string) ($state["status"] ?? "");
-			if ($status !== "queued" && !($status === "running" && intval($state["updated_at"] ?? 0) < time() - 30)) {
-				return false;
-			}
-			$state["status"] = "running";
-			$state["updated_at"] = time();
-			$this->storeCartProductSyncState($pid, $state);
-			return true;
-		} finally {
-			$this->releaseFileLock($lock);
-		}
-	}
-	public function markCartProductSyncQueued($pid, $token)
-	{
-		return $this->transitionCartProductSyncState($pid, $token, ["running"], "queued");
-	}
-	public function completeCartProductSync($pid, $token, $success)
-	{
-		$pid = intval($pid);
-		$lock = $this->acquireFileLock("cart-sync-enqueue", "product-" . $pid, 10, false, 2);
-		if ($lock === false) {
-			return false;
-		}
-		try {
-			$state = $this->getCartProductSyncState($pid);
-			if (!hash_equals((string) ($state["token"] ?? ""), (string) $token)) {
-				return false;
-			}
-			$state["status"] = $success ? "success" : "failed";
-			$state["updated_at"] = time();
-			if ($success) {
-				$product = \think\Db::name("products")->field("location_version,upstream_version")->where("id", $pid)->find();
-				$state["completed_version"] = empty($product) ? "" : self::cartProductVersion($product);
-			}
-			$this->storeCartProductSyncState($pid, $state);
-			return true;
-		} finally {
-			$this->releaseFileLock($lock);
-		}
-	}
-	public function validateCartProductSnapshot($pid, $version, $queueIfMissing = true)
-	{
-		$pid = intval($pid);
-		$product = \think\Db::name("products")
-			->field("id,api_type,zjmf_api_id,location_version,upstream_version")
-			->where("id", $pid)
-			->find();
-		if (empty($product)) {
-			return ["status" => 400, "msg" => "商品不存在"];
-		}
-		if (($product["api_type"] ?? "") !== "zjmf_api") {
-			return ["status" => 200, "version" => ""];
-		}
-		$current_version = self::cartProductVersion($product);
-		if (!is_string($version) || $version === "" || !hash_equals($current_version, $version)) {
-			return ["status" => 409, "msg" => "商品信息已更新，请刷新后重新确认"];
-		}
-		$auto_update = intval(\think\Db::name("zjmf_finance_api")->where("id", intval($product["zjmf_api_id"]))->value("auto_update"));
-		if ($auto_update !== 1) {
-			return ["status" => 200, "version" => $current_version];
-		}
-		$state = $this->getCartProductSyncState($pid);
-		if (self::isCartProductSyncSuccessFresh($state, $current_version)) {
-			return ["status" => 200, "version" => $current_version];
-		}
-		if ($queueIfMissing) {
-			$this->queueProductSyncForCart($pid);
-			$state = $this->getCartProductSyncState($pid);
-			if (self::isCartProductSyncSuccessFresh($state, $current_version)) {
-				return ["status" => 200, "version" => $current_version];
-			}
-		}
-		if (($state["status"] ?? "") === "failed") {
-			return ["status" => 409, "msg" => "商品信息更新失败，请稍后刷新重试"];
-		}
-		return ["status" => 409, "msg" => "商品信息正在更新，请稍后刷新重试"];
-	}
-	public function syncLegacySupplierOrderSnapshot($pid)
-	{
-		$pid = intval($pid);
-		$product = \think\Db::name("products")
-			->field("id,api_type,zjmf_api_id,upstream_pid,upstream_price_type,upstream_price_value,location_version,upstream_version")
-			->where("id", $pid)
-			->find();
-		if (empty($product) || ($product["api_type"] ?? "") !== "zjmf_api") {
-			return ["status" => 400, "msg" => "商品不存在"];
-		}
-		$auto_update = intval(\think\Db::name("zjmf_finance_api")->where("id", intval($product["zjmf_api_id"]))->value("auto_update"));
-		if ($auto_update === 1) {
-			$result = $this->syncProduct([
-				"pid" => $pid,
-				"zjmf_finance_api_id" => intval($product["zjmf_api_id"]),
-				"upstream_pid" => intval($product["upstream_pid"]),
-				"timeout" => 5,
-				"page_type" => "cart_queue",
-				"upstream_price_type" => $product["upstream_price_type"],
-				"upstream_price_value" => $product["upstream_price_value"],
-			]);
-			if (($result["status"] ?? 400) !== 200) {
-				return ["status" => 409, "msg" => "商品信息更新失败，请稍后重试"];
-			}
-			$product = \think\Db::name("products")->field("location_version,upstream_version")->where("id", $pid)->find();
-			$this->storeDirectCartProductSyncSuccess($pid, self::cartProductVersion($product));
-		}
-		return ["status" => 200, "version" => self::cartProductVersion($product)];
-	}
-	public function acquireCartProductOrderLocks($pids)
-	{
-		$pids = $this->normalizeProductIds($pids);
-		if (empty($pids)) {
-			return [];
-		}
-		$pids = \think\Db::name("products")->whereIn("id", $pids)->where("api_type", "zjmf_api")->order("id", "asc")->column("id");
-		$locks = [];
-		foreach ($pids as $pid) {
-			$lock = $this->acquireCartSyncLock($pid, 120);
-			if ($lock === false) {
-				$this->releaseCartProductOrderLocks($locks);
-				return false;
-			}
-			$locks[] = $lock;
-		}
-		return $locks;
-	}
-	public function releaseCartProductOrderLocks($locks)
-	{
-		foreach (array_reverse((array) $locks) as $lock) {
-			$this->releaseCartSyncLock($lock);
-		}
-	}
-	private function transitionCartProductSyncState($pid, $token, $allowedStatuses, $newStatus)
-	{
-		$pid = intval($pid);
-		$lock = $this->acquireFileLock("cart-sync-enqueue", "product-" . $pid, 10, false, 2);
-		if ($lock === false) {
-			return false;
-		}
-		try {
-			$state = $this->getCartProductSyncState($pid);
-			if (!hash_equals((string) ($state["token"] ?? ""), (string) $token)
-				|| !in_array((string) ($state["status"] ?? ""), $allowedStatuses, true)) {
-				return false;
-			}
-			$state["status"] = $newStatus;
-			$state["updated_at"] = time();
-			$this->storeCartProductSyncState($pid, $state);
-			return true;
-		} finally {
-			$this->releaseFileLock($lock);
-		}
-	}
-	private function cartProductSyncStateKey($pid)
-	{
-		return "cart_product_sync_state_" . intval($pid);
-	}
-	private function storeCartProductSyncState($pid, $state)
-	{
-		return cache($this->cartProductSyncStateKey($pid), $state, 172800);
-	}
-	private function newCartProductSyncToken()
-	{
-		try {
-			return bin2hex(random_bytes(16));
+			return $result;
 		} catch (\Throwable $e) {
-			return sha1(uniqid((string) mt_rand(), true));
-		}
-	}
-	private function storeDirectCartProductSyncSuccess($pid, $version)
-	{
-		$pid = intval($pid);
-		$lock = $this->acquireFileLock("cart-sync-enqueue", "product-" . $pid, 10, false, 2);
-		if ($lock === false) {
-			return false;
-		}
-		try {
-			$this->storeCartProductSyncState($pid, [
-				"token" => $this->newCartProductSyncToken(),
-				"status" => "success",
-				"requested_version" => $version,
-				"completed_version" => $version,
-				"updated_at" => time(),
-			]);
-			return true;
+			cache($failure_key, 1, 60);
+			return ["status" => 400, "msg" => "供应商同步失败，已使用本地数据"];
 		} finally {
-			$this->releaseFileLock($lock);
+			$this->releaseCartSyncLock($lock);
 		}
 	}
 	protected function acquireCartSyncLock($pid, $lease)

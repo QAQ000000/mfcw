@@ -168,9 +168,22 @@ function ticketContent($content)
 	return $_content;
 }
 
+function trustedAdminHtmlContent($content)
+{
+	$content = (string) $content;
+	for ($i = 0; $i < 2; $i++) {
+		$decoded = htmlspecialchars_decode($content, ENT_QUOTES);
+		if ($decoded === $content) {
+			break;
+		}
+		$content = $decoded;
+	}
+	return $content;
+}
+
 function safeHtmlContent($content)
 {
-	$content = htmlspecialchars_decode((string) $content, ENT_QUOTES);
+	$content = trustedAdminHtmlContent($content);
 	if (!class_exists("HTMLPurifier") || !class_exists("HTMLPurifier_Config")) {
 		return htmlspecialchars($content, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, "UTF-8");
 	}

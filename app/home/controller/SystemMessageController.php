@@ -55,7 +55,7 @@ class SystemMessageController extends \cmf\controller\HomeBaseController
 		})->count();
 		if ($list) {
 			foreach ($list as &$item) {
-				$item["content"] = safeHtmlContent($item["content"]);
+				$item["content"] = trustedAdminHtmlContent($item["content"]);
 				$item["create_time"] = date("Y-m-d H:i:s", $item["create_time"]);
 				$item["type_text"] = $this->system_message_type[$item["type"]];
 				if ($item["attachment"]) {

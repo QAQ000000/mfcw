@@ -243,7 +243,7 @@ class TicketController extends \cmf\controller\HomeBaseController
 				return $url . $v1;
 			}, explode(",", $v["attachment"])) : [];
 			if (!empty($v["admin"])) {
-				$v["content"] = safeHtmlContent($v["content"]);
+				$v["content"] = trustedAdminHtmlContent($v["content"]);
 				$v["user_type"] = "admin";
 				$v["user"] = $v["admin"];
 				$tmp = \think\Db::name("user")->find($v["admin_id"]);
@@ -269,7 +269,7 @@ class TicketController extends \cmf\controller\HomeBaseController
 			$v["format_time"] = date("Y-m-d H:i:s", $v["create_time"]);
 			$v["realname"] = "";
 			if ($v["admin_id"] > 0) {
-				$v["content"] = safeHtmlContent($v["content"]);
+				$v["content"] = trustedAdminHtmlContent($v["content"]);
 				$v["user_type"] = lang("ADMIN");
 				$v["user"] = $v["admin"];
 				$tmp = \think\Db::name("user")->find($v["admin_id"]);

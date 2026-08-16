@@ -121,7 +121,6 @@
 {/if}
 
 <form id="addCartForm" method="post" action="?action=configureproduct&pid={$CartConfig.product.id}{if $Get.site}&site={$Get.site}{/if}" class="configoption_form needs-validation">
-	<input type="hidden" name="supplier_version" value="{$CartConfig.product.supplier_version|default=''}" />
 					{if $CartConfig.config_options}
 					<input type="hidden" name="i" value="{$Think.get.i}" />
 					{/if}

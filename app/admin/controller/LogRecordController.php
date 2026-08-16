@@ -839,7 +839,7 @@ class LogRecordController extends AdminBaseController
 		})->order($orderby, $sorting)->page($page)->limit($limit)->select()->toArray();
 		if ($list) {
 			foreach ($list as &$item) {
-				$item["content"] = safeHtmlContent($item["content"]);
+				$item["content"] = trustedAdminHtmlContent($item["content"]);
 				$item["create_time"] = date("Y-m-d H:i:s", $item["create_time"]);
 				if ($item["attachment"]) {
 					$attachment = explode(",", $item["attachment"]);

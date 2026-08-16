@@ -34,7 +34,7 @@ class MessageController extends \cmf\controller\HomeBaseController
 		})->count();
 		if ($list) {
 			foreach ($list as &$item) {
-				$item["content"] = safeHtmlContent($item["content"]);
+				$item["content"] = trustedAdminHtmlContent($item["content"]);
 				$item["type"] = $this->system_message_type[$item["type"]];
 				if ($item["attachment"]) {
 					$attachment = explode(",", $item["attachment"]);

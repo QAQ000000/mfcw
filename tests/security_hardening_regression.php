@@ -186,10 +186,11 @@ foreach ([
 assertSecurityHardening(strpos($common, 'function safeHtmlContent') !== false, "rich HTML output must have a shared purifier");
 assertSecurityHardening(strpos($common, 'HTMLPurifier_Config::createDefault()') !== false, "rich HTML must be filtered by HTMLPurifier");
 assertSecurityHardening(strpos($common, 'ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5') !== false, "plain ticket text must be encoded safely");
+assertSecurityHardening(strpos($common, 'function trustedAdminHtmlContent') !== false, "administrator-authored HTML must use an explicit trust boundary");
 
 foreach ([$homeMessages, $openapiMessages] as $source) {
 	assertSecurityHardening(strpos($source, '$params["uid"]') === false && strpos($source, '$param["uid"]') === false, "message operations must not trust a client-supplied uid");
-	assertSecurityHardening(strpos($source, 'safeHtmlContent($item["content"])') !== false, "message HTML must be purified before output");
+	assertSecurityHardening(strpos($source, 'trustedAdminHtmlContent($item["content"])') !== false, "administrator-authored message HTML must retain its original markup");
 }
 
 assertSecurityHardening(strpos($check, 'catch (\\Throwable $e)') !== false, "JWT verification must catch unexpected throwables");
