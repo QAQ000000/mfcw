@@ -8,10 +8,18 @@ class AutoCreate extends \app\queue\common\JobCommon
 	public function fire(\think\queue\Job $job, $data)
 	{
 		try {
-			$job->delete();
 			$this->handle($data);
+			$job->delete();
 		} catch (\Throwable $e) {
-			self::later($data, 10);
+			try {
+				\think\facade\Log::record(static::class . " queue failed: " . $e->getMessage(), "error");
+			} catch (\Throwable $logException) {
+			}
+			if ($job->attempts() >= 3) {
+				$job->delete();
+			} else {
+				$job->release(10);
+			}
 		}
 	}
 	/**
