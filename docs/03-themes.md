@@ -45,6 +45,9 @@ config-parent-theme:"default"
 Cookie。不要把这个入口当作生产权限边界，也不要允许任意目录名；控制器只接受实际
 主题目录列表中的名称。
 
+当前语言加载仍按后台 `clientarea_default_themes` 读取主题语言文件，可能不会随
+`?theme=` 和 Cookie 一起切换。调试子主题时应分别核对模板与语言来源。
+
 ## 3. 创建购物车子主题
 
 ```text
@@ -79,8 +82,9 @@ nologinheader:clientarea
 读取扁平键值；缩进没有层级含义，值中也不能安全包含冒号。新配置应使用 CRLF 和简单
 `key:"value"` 行，不要依赖嵌套结构，也不要改成只有 LF 的换行格式。
 
-`?carttheme=<name>` 或商品配置可切换购物车主题，并写入 `cart_theme` Cookie。产品
-配置、配置项价格、优惠码、数量修改和结算表单必须一起测试，不能只检查首屏样式。
+`?carttheme=<name>` 会切换购物车主题并写入 `cart_theme` Cookie；商品配置指定的主题只
+影响当前请求，不会更新该 Cookie。产品配置、配置项价格、优惠码、数量修改和结算表单
+必须一起测试，不能只检查首屏样式。
 
 ## 4. 官网主题
 

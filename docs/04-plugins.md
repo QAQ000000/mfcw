@@ -8,6 +8,10 @@
 `public/plugins/<type>/<name>/` 发现。OAuth 和服务器模块另有独立加载契约，分别见对应
 文档。当前仓库的可读示例主要位于 `public/plugins/`。
 
+`PluginModel` 还接受历史类型 `firewall`，但当前仓库没有对应目录或根命名空间配置，
+不能把它当作可运行模板。OAuth 虽也登记在 `plugin` 表中，但不继承本章的通用主类，
+应按第三方登录文档开发。
+
 类名遵循以下映射：
 
 ```text
@@ -140,9 +144,9 @@ $homeUrl = shd_addon_url('AcmeTools://Index/index', [], true);
 
 ## 6. 菜单与多语言
 
-后台菜单放在 `menu.php`，客户中心菜单放在 `menuclientarea.php`。安装和更新会递归
-导入菜单到 `nav` 表，卸载时删除插件菜单。菜单动作必须与控制器方法一致，并通过既有
-权限体系限制后台入口。
+后台菜单放在 `menu.php`，管理端会在运行时读取，不写入 `nav` 表。客户中心菜单放在
+`menuclientarea.php`，安装和更新时递归导入 `nav`，卸载时按插件名删除。两类菜单动作
+都必须与控制器方法一致，并通过既有权限体系限制入口。
 
 插件语言放在 `lang/zh-cn.php`、`lang/en-us.php`。基类当前把 `chinese_tw` 也映射到
 `zh-cn`；需要繁体差异时必须实测并在插件层显式处理，不能仅增加一个未被加载的文件。
@@ -152,10 +156,10 @@ $homeUrl = shd_addon_url('AcmeTools://Index/index', [], true);
 | 操作 | 框架行为 | 插件要求 |
 | --- | --- | --- |
 | 发现 | 合并磁盘目录与 `plugin` 表，未安装项状态为 3 | 类名、目录名和 `$info` 一致 |
-| 安装 | 调用 `install()`、登记 Hook、保存配置、导入菜单 | 幂等、失败可清理 |
+| 安装 | 调用 `install()`、登记 Hook、保存配置、导入客户菜单 | 幂等、失败可清理 |
 | 启停 | 同步 `plugin.status` 和 `hook_plugin.status` | 请求入口仍做业务授权 |
 | 配置 | 按 `config.php` 验证后保存 JSON | 兼容缺失字段和旧配置 |
-| 更新 | 重导菜单、合并默认配置、增补 Hook | 提供向前兼容迁移 |
+| 更新 | 重导客户菜单、合并默认配置、增补 Hook | 提供向前兼容迁移 |
 | 卸载 | 删除插件记录、Hook、菜单并调用 `uninstall()` | 明确数据保留策略 |
 
 当前更新逻辑删除旧 Hook 的差集计算存在缺陷，移除主类方法后旧的 `hook_plugin` 记录

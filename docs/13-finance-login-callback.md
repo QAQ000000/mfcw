@@ -80,8 +80,10 @@ curl -X POST 'https://finance.example.com/api/oauth/accountGetAccessToken' \
 }
 ```
 
-前端读取后再跳转。调用方回调页必须从 URL 取出 Token，立即在服务端换取用户信息，
-然后清除浏览器地址中的 Token。
+前端读取后再跳转。调用方回调页应从 URL 取出 Token，并立即清除浏览器地址中的 Token。
+交互式/自动模式必须再由原浏览器会话携带财务 Cookie 调用 `getUserInfo`；当前实现没有把
+Token 与客户绑定，业务后端不能只凭 Token 独立换取用户信息。若需要标准的服务端换取
+流程，必须重做一次性票据与用户绑定，不能直接复用此兼容接口。
 
 ### 3.3 已登录客户自动授权
 
