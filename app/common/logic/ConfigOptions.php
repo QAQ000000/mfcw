@@ -19,9 +19,31 @@ class ConfigOptions
 	}
 	public function filterConfigOptions($pid, $configoptions)
 	{
+		static $requestCache = [];
+		$cacheKey = intval($pid) . ":" . md5(serialize($configoptions));
+		if (array_key_exists($cacheKey, $requestCache)) {
+			return $requestCache[$cacheKey];
+		}
 		$allConfigArr = \think\Db::name("product_config_options")->alias("a")->field("a.*")->leftJoin("product_config_links b", "b.gid=a.gid")->where("b.pid", $pid)->where("a.hidden", 0)->order("a.order", "asc")->select()->toArray();
 		$config_keys = array_keys($configoptions);
 		$configoptions_filter = [];
+		$suboptionsByConfig = [];
+		$visibleSuboptionsByConfig = [];
+		$selectionConfigIds = [];
+		foreach ($allConfigArr as $option) {
+			if (in_array($option["id"], $config_keys) && !judgeQuantity($option["option_type"])) {
+				$selectionConfigIds[] = $option["id"];
+			}
+		}
+		if (!empty($selectionConfigIds)) {
+			$suboptions = \think\Db::name("product_config_options_sub")->whereIn("config_id", $selectionConfigIds)->order("sort_order", "asc")->order("id", "asc")->select()->toArray();
+			foreach ($suboptions as $suboption) {
+				$suboptionsByConfig[$suboption["config_id"]][$suboption["id"]] = $suboption;
+				if (intval($suboption["hidden"]) === 0) {
+					$visibleSuboptionsByConfig[$suboption["config_id"]][] = $suboption;
+				}
+			}
+		}
 		if (!empty($allConfigArr[0])) {
 			foreach ($allConfigArr as $k => $v) {
 				if (!in_array($v["id"], $config_keys)) {
@@ -42,11 +64,14 @@ class ConfigOptions
 				} else {
 					if ($option_type == 3) {
 						if ($configoptions[$config_id]) {
-							$exists_data = \think\Db::name("product_config_options_sub")->where("hidden", 0)->where("config_id", $config_id)->where("id", $configoptions[$config_id])->find();
+							$exists_data = $suboptionsByConfig[$config_id][$configoptions[$config_id]] ?? [];
+							if (!empty($exists_data) && intval($exists_data["hidden"]) !== 0) {
+								$exists_data = [];
+							}
 							if (!empty($exists_data)) {
 								$configoptions_filter[$config_id] = $configoptions[$config_id];
 							} else {
-								$sub_data = \think\Db::name("product_config_options_sub")->where("hidden", 0)->where("config_id", $config_id)->order("sort_order asc")->order("id asc")->find();
+								$sub_data = $visibleSuboptionsByConfig[$config_id][0] ?? [];
 								if (!empty($sub_data)) {
 									$configoptions_filter[$config_id] = $sub_data["id"];
 								}
@@ -56,17 +81,17 @@ class ConfigOptions
 						}
 					} else {
 						if ($configoptions[$config_id]) {
-							$exists_data = \think\Db::name("product_config_options_sub")->where("config_id", $config_id)->where("id", $configoptions[$config_id])->find();
+							$exists_data = $suboptionsByConfig[$config_id][$configoptions[$config_id]] ?? [];
 							if (!empty($exists_data)) {
 								$configoptions_filter[$config_id] = $configoptions[$config_id];
 							} else {
-								$sub_data = \think\Db::name("product_config_options_sub")->where("hidden", 0)->where("config_id", $config_id)->order("sort_order asc")->order("id asc")->find();
+								$sub_data = $visibleSuboptionsByConfig[$config_id][0] ?? [];
 								if (!empty($sub_data)) {
 									$configoptions_filter[$config_id] = $sub_data["id"];
 								}
 							}
 						} else {
-							$sub_data = \think\Db::name("product_config_options_sub")->where("hidden", 0)->where("config_id", $config_id)->order("sort_order asc")->order("id asc")->find();
+							$sub_data = $visibleSuboptionsByConfig[$config_id][0] ?? [];
 							if (!empty($sub_data)) {
 								$configoptions_filter[$config_id] = $sub_data["id"];
 							}
@@ -75,7 +100,47 @@ class ConfigOptions
 				}
 			}
 		}
-		return $configoptions_filter;
+		$requestCache[$cacheKey] = $configoptions_filter;
+		return $requestCache[$cacheKey];
+	}
+	public function getConfigPricingSnapshot($configoptions, $currencyid)
+	{
+		static $requestCache = [];
+		$cacheKey = intval($currencyid) . ":" . md5(serialize($configoptions));
+		if (array_key_exists($cacheKey, $requestCache)) {
+			return $requestCache[$cacheKey];
+		}
+		$snapshot = ["options" => [], "selected" => [], "quantity" => []];
+		$configIds = array_keys($configoptions);
+		if (empty($configIds)) {
+			$requestCache[$cacheKey] = $snapshot;
+			return $snapshot;
+		}
+		$options = \think\Db::name("product_config_options")->field("id,option_type,unit")->whereIn("id", $configIds)->select()->toArray();
+		$selectedSubIds = [];
+		$quantityConfigIds = [];
+		foreach ($options as $option) {
+			$snapshot["options"][$option["id"]] = $option;
+			if (judgeQuantity($option["option_type"])) {
+				$quantityConfigIds[] = $option["id"];
+			} elseif (!empty($configoptions[$option["id"]])) {
+				$selectedSubIds[] = $configoptions[$option["id"]];
+			}
+		}
+		if (!empty($selectedSubIds)) {
+			$selectedOptions = \think\Db::name("product_config_options_sub")->alias("pcos")->field("pcos.config_id as config_id,pco.is_discount,pcos.option_name as suboption_name,pco.option_type,pco.option_name as option_name,pco.hidden,p.*,pco.is_rebate")->leftJoin("product_config_options pco", "pco.id = pcos.config_id")->leftJoin("pricing p", "p.relid = pcos.id")->whereIn("pcos.id", $selectedSubIds)->whereIn("pcos.config_id", $configIds)->where("p.type", "configoptions")->where("p.currency", $currencyid)->select()->toArray();
+			foreach ($selectedOptions as $option) {
+				$snapshot["selected"][$option["config_id"]] = $option;
+			}
+		}
+		if (!empty($quantityConfigIds)) {
+			$quantityOptions = \think\Db::name("product_config_options_sub")->alias("pcos")->field("pcos.config_id as config_id,pcos.option_name as suboption_name,pcos.qty_minimum,pcos.qty_maximum,pco.option_type,pco.hidden,pco.option_name as option_name,pco.qty_minimum as min,pco.qty_maximum as max,pco.is_discount,p.*,pco.is_rebate")->leftJoin("product_config_options pco", "pco.id = pcos.config_id")->leftJoin("pricing p", "p.relid = pcos.id")->whereIn("pcos.config_id", $quantityConfigIds)->where("p.type", "configoptions")->where("p.currency", $currencyid)->select()->toArray();
+			foreach ($quantityOptions as $option) {
+				$snapshot["quantity"][$option["config_id"]][] = $option;
+			}
+		}
+		$requestCache[$cacheKey] = $snapshot;
+		return $requestCache[$cacheKey];
 	}
 	public function getConfigInfo($pid, $admin = false)
 	{

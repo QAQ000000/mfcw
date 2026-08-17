@@ -79,7 +79,7 @@ class CronController extends AdminBaseController
 		$data = getConfig(array_keys($cron_config));
 		$data = array_merge($cron_config, $data);
 		$data["cron_command"] = config("cron_command");
-		$data["stock_cron_command"] = "php " . CMF_ROOT . "think cron:stock";
+		$data["stock_cron_command"] = "runuser -u www -- php " . CMF_ROOT . "think cron:stock";
 		$data["marking_cron_command"] = config("marking_cron_command");
 		$data["cron_last_run_time_over"] = configuration("cron_last_run_time_over");
 		if ($data["cron_last_run_time_over"] - $data["cron_last_run_time"] > 1200) {

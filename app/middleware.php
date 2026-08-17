@@ -1,3 +1,3 @@
 <?php
 
-return ["app\\http\\middleware\\AppCheck"];
+return ["app\\http\\middleware\\PerformanceConsole", "app\\http\\middleware\\AppCheck"];

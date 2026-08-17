@@ -17,8 +17,13 @@ class StockCron extends Command
 	{
 		$lock = $this->acquireLock();
 		if ($lock === false) {
-			$output->writeln("库存计划任务正在运行，本次跳过");
-			return 0;
+			$finished_at = time();
+			$error = "库存计划任务无法取得执行锁，任务可能仍在运行或锁文件不可写";
+			updateConfiguration("stock_cron_last_run_time_over", $finished_at);
+			updateConfiguration("stock_cron_last_run_status", 0);
+			updateConfiguration("stock_cron_last_run_error", $error);
+			$output->writeln($error);
+			return 1;
 		}
 
 		$started_at = time();
@@ -31,6 +36,7 @@ class StockCron extends Command
 			$status = ($result["status"] ?? 400) == 200 ? 1 : 0;
 			$error = implode("; ", $result["errors"] ?? []);
 			$output->writeln("库存变更商品数:" . intval($result["updated"] ?? 0));
+			$output->writeln("库存跳过商品数:" . intval($result["skipped"] ?? 0));
 		} catch (\Throwable $e) {
 			$error = $e->getMessage();
 			active_log_final("库存计划任务执行异常:" . $error, 0, 5);

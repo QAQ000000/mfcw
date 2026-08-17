@@ -33,9 +33,25 @@ class File
             mkdir($dir, 0755, true);
         }
 
-        // 生成模板缓存文件
-        if (false === file_put_contents($cacheFile, $content)) {
+        // 先写入同目录临时文件，避免并发 include 读到被截断的缓存。
+        $tempFile = tempnam($dir, basename($cacheFile) . '.');
+        if (false === $tempFile) {
             throw new Exception('cache write error:' . $cacheFile, 11602);
+        }
+
+        try {
+            if (false === file_put_contents($tempFile, $content, LOCK_EX)) {
+                throw new Exception('cache write error:' . $cacheFile, 11602);
+            }
+
+            @chmod($tempFile, 0644);
+            if (!@rename($tempFile, $cacheFile)) {
+                throw new Exception('cache write error:' . $cacheFile, 11602);
+            }
+        } finally {
+            if (is_file($tempFile)) {
+                @unlink($tempFile);
+            }
         }
     }
 

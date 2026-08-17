@@ -516,11 +516,6 @@ function view_tpl_common($content, $include = "")
 			$_SESSION["view_tpl_tagdata"] = $_SESSION["view_tpl_tagdata"] ? array_merge($_SESSION["view_tpl_tagdata"], $view_html_tagdata[0]) : $view_html_tagdata[0];
 		}
 	}
-	if (VIEW_TEMPLATE_WEB === true) {
-	} else {
-		$debug = ["{debug}"];
-		$_SESSION["view_tpl_debug"] = $debug;
-	}
 	preg_match_all("/{\\s*debug.*?}/is", $content, $debug);
 	if ($debug[0]) {
 		$_SESSION["view_tpl_debug"] = $_SESSION["view_tpl_debug"] ? array_merge($_SESSION["view_tpl_debug"], $debug[0]) : $debug[0];

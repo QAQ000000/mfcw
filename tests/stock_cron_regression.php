@@ -131,10 +131,11 @@ namespace {
 	class TestableStockProduct extends \app\common\logic\Product
 	{
 		public $refreshedProductIds = [];
+		public $lockProducts = true;
 
 		protected function acquireCartSyncLock($pid, $lease)
 		{
-			return ["pid" => $pid];
+			return $this->lockProducts ? ["pid" => $pid] : false;
 		}
 
 		protected function releaseCartSyncLock($lock)
@@ -190,6 +191,15 @@ namespace {
 	assertStockCron($failedResult["status"] === 400, "supplier failures must mark the inventory task as failed");
 	assertStockCron(!empty($activityLogs), "supplier failures must leave an activity log");
 
+	$upstreamInventoryResponse[1] = ["status" => 200, "data" => ["info" => [
+		["id" => 100, "location_version" => 7, "stock_control" => 1, "qty" => 8],
+	]]];
+	$lockedProduct = new TestableStockProduct();
+	$lockedProduct->lockProducts = false;
+	$lockedResult = $lockedProduct->cronSyncInventory();
+	assertStockCron($lockedResult["status"] === 400, "products skipped by a sync lock must mark the task failed");
+	assertStockCron($lockedResult["updated"] === 0 && $lockedResult["skipped"] === 1, "sync lock skips must be counted without writing inventory");
+
 	$root = dirname(__DIR__);
 	$commandRegistry = file_get_contents($root . "/app/command.php");
 	$cronSource = file_get_contents($root . "/app/admin/command/Cron.php");
@@ -204,7 +214,9 @@ namespace {
 	assertStockCron(strpos($commandRegistry, "StockCron") !== false, "the inventory command must be registered");
 	assertStockCron(strpos($cronSource, '$this->syncUpstreamProductInfo();') !== false, "the original full product cron must remain unchanged");
 	assertStockCron(strpos($stockCommand, 'setName("cron:stock")') !== false, "the inventory command name must remain stable");
+	assertStockCron(strpos($stockCommand, 'updateConfiguration("stock_cron_last_run_status", 0)') !== false && strpos($stockCommand, 'return 1;') !== false, "inventory command lock failures must be reported as failures");
 	assertStockCron(strpos($controller, 'stock_cron_status') !== false, "the automatic-tasks API must expose inventory task status");
+	assertStockCron(strpos($controller, 'runuser -u www -- php ') !== false, "the inventory command hint must run with the web worker account");
 	assertStockCron(strpos($adminChunk, 'please_setting_stock_min_one') !== false && strpos($adminChunk, 'stockAlertStatus') !== false, "the automatic-tasks page must display inventory command and status prompts");
 
 	fwrite(STDOUT, "stock cron regression checks passed" . PHP_EOL);

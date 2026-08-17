@@ -1464,14 +1464,15 @@ class CartController extends CommonController
 			}
 			$configoptions_logic = new \app\common\logic\ConfigOptions();
 			$configoption = $configoptions_logic->filterConfigOptions($pid, $configoption);
+			$configPricingSnapshot = $configoptions_logic->getConfigPricingSnapshot($configoption, $currencyid);
 			foreach ($configoption as $key => $value) {
-				$option1 = \think\Db::name("product_config_options")->field("option_type,unit")->where("id", $key)->find();
+				$option1 = $configPricingSnapshot["options"][$key] ?? [];
 				$option_type = $option1["option_type"];
 				$option_unit = $option1["unit"];
 				if ($option_type && $value) {
 					$option_filter = [];
 					if (!judgeQuantity($option_type)) {
-						$option = \think\Db::name("product_config_options_sub")->alias("pcos")->field("pco.is_discount,pcos.option_name as suboption_name,pco.option_type,pco.option_name as option_name,pco.hidden,p.*,pco.is_rebate")->leftJoin("product_config_options pco", "pco.id = pcos.config_id")->leftJoin("pricing p", "p.relid = pcos.id")->where("pcos.id", $value)->where("pcos.config_id", $key)->where("p.type", "configoptions")->where("p.currency", $currencyid)->find();
+						$option = $configPricingSnapshot["selected"][$key] ?? [];
 						if (!$option) {
 							return jsons(["status" => 400, "msg" => lang("ERROR_OPERATE")]);
 						} else {
@@ -1585,7 +1586,7 @@ class CartController extends CommonController
 							}
 						}
 					} else {
-						$options = \think\Db::name("product_config_options_sub")->alias("pcos")->field("pcos.option_name as suboption_name,pcos.qty_minimum,pcos.qty_maximum,pco.option_type,pco.hidden,pco.option_name as option_name,pco.qty_minimum as min,pco.qty_maximum as max,pco.is_discount,p.*,pco.is_rebate")->leftJoin("product_config_options pco", "pco.id = pcos.config_id")->leftJoin("pricing p", "p.relid = pcos.id")->where("pcos.config_id", $key)->where("p.type", "configoptions")->where("currency", $currencyid)->select();
+						$options = $configPricingSnapshot["quantity"][$key] ?? [];
 						if (!empty($options[0])) {
 							foreach ($options as $option) {
 								$min = $option["qty_minimum"];

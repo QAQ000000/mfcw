@@ -813,6 +813,7 @@ class Product
 	{
 		$apis = \think\Db::name("zjmf_finance_api")->field("id,name")->where("type", "zjmf_api")->select()->toArray();
 		$updated_count = 0;
+		$skipped_count = 0;
 		$errors = [];
 		foreach ($apis as $api) {
 			$api_id = intval($api["id"]);
@@ -855,6 +856,7 @@ class Product
 						}
 						$product_lock = $this->acquireCartSyncLock($product["id"], 120);
 						if ($product_lock === false) {
+							$skipped_count++;
 							continue;
 						}
 						try {
@@ -896,9 +898,15 @@ class Product
 				}
 			}
 		}
+		if ($skipped_count > 0) {
+			$error = "库存同步有{$skipped_count}个商品因同步锁冲突被跳过";
+			$errors[] = $error;
+			active_log_final(ClientActivityLog::markInternal("定时任务" . $error, "supplier"), 0, 5);
+		}
 		return [
 			"status" => empty($errors) ? 200 : 400,
 			"updated" => $updated_count,
+			"skipped" => $skipped_count,
 			"errors" => $errors,
 		];
 	}

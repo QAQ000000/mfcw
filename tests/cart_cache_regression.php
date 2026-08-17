@@ -218,11 +218,28 @@ sourceContains($root . "/app/common/logic/ConfigOptions.php", [
 	'->whereIn("relid", $suboptionIds)',
 	'$suboptions = $suboptionsByConfig[$cid] ?? [];',
 	'$pricings = $pricingsBySub[$subid] ?? [];',
+	'public function getConfigPricingSnapshot($configoptions, $currencyid)',
+	'$snapshot = ["options" => [], "selected" => [], "quantity" => []];',
 ]);
 $configOptionsSource = file_get_contents($root . "/app/common/logic/ConfigOptions.php");
+preg_match('/public function filterConfigOptions\(.*?public function getConfigPricingSnapshot/s', $configOptionsSource, $filterConfigOptionsMethod);
+assertTrue(substr_count($filterConfigOptionsMethod[0], 'Db::name("product_config_options_sub")') === 1, "filterConfigOptions must validate all suboptions in one query");
 preg_match('/public function getConfigInfo\(.*?public function configShow/s', $configOptionsSource, $getConfigInfoMethod);
 assertTrue(substr_count($getConfigInfoMethod[0], 'Db::name("product_config_options_sub")') === 1, "getConfigInfo must load all suboptions in one query");
 assertTrue(substr_count($getConfigInfoMethod[0], 'Db::name("pricing")') === 1, "getConfigInfo must load all pricing rows in one query");
+$homeCartSource = file_get_contents($root . "/app/home/controller/CartController.php");
+preg_match('/public function getTotal\(.*?(?=\n\tpublic function )/s', $homeCartSource, $getTotalMethod);
+assertTrue(strpos($getTotalMethod[0], 'getConfigPricingSnapshot($configoption, $currencyid)') !== false, "getTotal must reuse a batched configuration pricing snapshot");
+assertTrue(strpos($getTotalMethod[0], '->where("id", $key)->find()') === false, "getTotal must not query option metadata inside its configuration loop");
+$templateStorageSource = file_get_contents($root . "/vendor/thinkphp/library/think/template/driver/File.php");
+assertTrue(strpos($templateStorageSource, 'tempnam($dir, basename($cacheFile)') !== false, "template cache writes must use a same-directory temporary file");
+assertTrue(strpos($templateStorageSource, 'rename($tempFile, $cacheFile)') !== false, "template cache replacement must be atomic");
+assertTrue(strpos($templateStorageSource, 'file_put_contents($cacheFile, $content)') === false, "template cache writes must not truncate the live cache file");
+$commonSource = file_get_contents($root . "/app/common.php");
+preg_match('/function view_tpl_common\(.*?function view_tpl_array_out/s', $commonSource, $viewTplCommonMethod);
+assertTrue(!empty($viewTplCommonMethod[0]), "view_tpl_common must remain available");
+assertTrue(strpos($viewTplCommonMethod[0], '$debug = ["{debug}"];') === false, "view_tpl_common must not force template debug recompilation");
+assertTrue(strpos($viewTplCommonMethod[0], 'preg_match_all("/{\\\\s*debug.*?}/is", $content, $debug);') !== false, "view_tpl_common must still detect explicit debug tags");
 sourceDoesNotContain($root . "/app/common/logic/Shop.php", [
 	'validateCartProductSnapshot',
 	'supplier_version',
