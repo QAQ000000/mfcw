@@ -15,6 +15,15 @@ $products = file_get_contents($root . '/app/api/controller/ProductController.php
 $flowPackets = file_get_contents($root . '/app/api/controller/FlowPacketController.php');
 $ticket = file_get_contents($root . '/app/home/controller/TicketController.php');
 $adminCheck = file_get_contents($root . '/app/http/middleware/AdminCheck.php');
+$openapiLogin = file_get_contents($root . '/app/openapi/controller/LoginController.php');
+$openapiPublic = file_get_contents($root . '/app/openapi/controller/PublicController.php');
+$openapiAffiliate = file_get_contents($root . '/app/openapi/controller/AffiliateController.php');
+$oauth = file_get_contents($root . '/app/api/controller/OauthController.php');
+$legacyOauthView = file_get_contents($root . '/app/home/controller/ViewClientsController.php');
+$homeRoutes = file_get_contents($root . '/data/route/home.php');
+$homeIndex = file_get_contents($root . '/app/home/controller/IndexController.php');
+$legacyAdmin = file_get_contents($root . '/app/admin/controller/AdminController.php');
+$homeLogin = file_get_contents($root . '/app/home/controller/LoginController.php');
 $productListStart = strpos($products, 'public function proList()');
 $productDetailStart = strpos($products, 'public function detail()');
 $upgradeProductStart = strpos($products, 'public function getUpgradeProduct()');
@@ -87,5 +96,86 @@ $serviceCheck = strpos($ticket, '$service = intval($params["service"])');
 assertPublicApiSecurity($ticketHook !== false && $departmentCheck !== false && $serviceCheck !== false && $ticketHook > $departmentCheck && $ticketHook > $serviceCheck, 'ticket hooks must run only after caller, department, and service validation');
 assertPublicApiSecurity(strpos($adminCheck, 'intval($sessionAdminId) !== 1') !== false, 'database upgrades must be restricted to the super administrator');
 assertPublicApiSecurity(strpos($adminCheck, 'Access-Control-Allow-Origin') === false && strpos($adminCheck, 'Access-Control-Allow-Credentials') === false, 'upgrade routes must not reflect credentialed cross-origin requests');
+
+assertPublicApiSecurity(
+	strpos($openapiLogin, 'private function verificationCodeMatches') !== false
+		&& strpos($openapiLogin, 'Cache::has($key)') !== false
+		&& strpos($openapiLogin, 'hash_equals((string) $cached_code, (string) $provided_code)') !== false,
+	'OpenAPI registration and password reset must reject missing caches and compare verification codes strictly'
+);
+assertPublicApiSecurity(
+	strpos($openapiLogin, 'if (configuration("allow_email_register_code"))') !== false
+		&& strpos($openapiLogin, '$rules["code"] = "require"') !== false,
+	'OpenAPI email registration must require a code when the configured email-code flow is enabled'
+);
+assertPublicApiSecurity(
+	strpos($openapiLogin, 'configuration("allow_register_email_captcha")') !== false
+		&& strpos($openapiLogin, 'where("email", $data["email"])') !== false,
+	'OpenAPI email registration must use the email captcha setting and check duplicate email addresses'
+);
+assertPublicApiSecurity(
+	strpos($openapiLogin, 'Cache::rm($verification_code_key)') !== false
+		&& strpos($openapiLogin, '["uid" => $client["id"]') !== false,
+	'OpenAPI verification codes must be consumed and password-reset hooks must receive the affected user id'
+);
+assertPublicApiSecurity(
+	strpos($openapiPublic, 'phonenumber=\\"') === false
+		&& strpos($openapiPublic, 'whereOr("email", $account)') !== false
+		&& strpos($openapiPublic, 'hash_equals((string) $cached_code, (string) $data["code"])') !== false,
+	'OpenAPI second verification must bind account lookups and compare cached codes strictly'
+);
+assertPublicApiSecurity(
+	strpos($openapiAffiliate, "like '%{") === false
+		&& strpos($openapiAffiliate, 'whereOr("i.subtotal", "like", $search_desc)') !== false
+		&& strpos($openapiAffiliate, 'where("c.username", "like", "%" . $params["username"] . "%")') !== false,
+	'OpenAPI affiliate searches must use bound query-builder conditions'
+);
+assertPublicApiSecurity(
+	substr_count($openapiAffiliate, '$order_fields = [') === 2
+		&& substr_count($openapiAffiliate, 'in_array($sort, ["asc", "desc"], true)') === 2,
+	'OpenAPI affiliate sorting must use field and direction allowlists'
+);
+assertPublicApiSecurity(
+	strpos($openapiAffiliate, '$row["email"] = $this->maskEmail') !== false
+		&& strpos($openapiAffiliate, '$row["phonenumber"] = $this->maskPhone') !== false,
+	'OpenAPI affiliate users must not expose full email addresses or phone numbers'
+);
+assertPublicApiSecurity(
+	strpos($oauth, 'private function accessTokenCacheKey') !== false
+		&& substr_count($oauth, '$this->storeAccessToken($token)') === 3
+		&& strpos($legacyOauthView, '"oauth_access_token_" . strtolower($token)') !== false
+		&& strpos($oauth, 'Cache::set("access_token"') === false
+		&& strpos($legacyOauthView, 'Cache::set("access_token"') === false,
+	'OAuth access tokens must use independent cache entries across all issuers'
+);
+assertPublicApiSecurity(
+	strpos($oauth, 'private function authorizeTokenCacheKey') !== false
+		&& strpos($oauth, 'hash_equals($key, $authorize_json_web_token)') !== false,
+	'OAuth automatic authorization tokens must be isolated by login session and compared strictly'
+);
+assertPublicApiSecurity(
+	strpos($homeRoutes, 'del_cwxt_home_login') === false
+		&& strpos($homeIndex, 'function del_cwxt_home_login') === false,
+	'public callers must not be able to clear arbitrary client login lockouts'
+);
+assertPublicApiSecurity(
+	strpos($legacyAdmin, 'insertGetId($_POST)') === false
+		&& strpos($legacyAdmin, '$insert = [') !== false
+		&& strpos($legacyAdmin, 'in_array(1, $role_ids, true)') !== false
+		&& strpos($legacyAdmin, '\\think\\Db::startTrans()') !== false,
+	'legacy administrator creation must use an explicit field allowlist and authorize roles before its transaction'
+);
+assertPublicApiSecurity(
+	strpos($legacyAdmin, 'preg_match("/^\\\\d{4}-\\\\d{2}-\\\\d{2}$/", $date)') !== false
+		&& strpos($legacyAdmin, 'realpath(CMF_ROOT . "data/journal")') !== false
+		&& strpos($legacyAdmin, 'strncmp($filename, $journal_prefix') !== false,
+	'legacy administrator log viewing must enforce a canonical journal path and strict date format'
+);
+assertPublicApiSecurity(
+	strpos($homeLogin, 'hash_equals($stored_password, $password)') !== false
+		&& strpos($homeLogin, '$password == $result["password"]') === false
+		&& strpos($homeLogin, '!empty($data["token"]) ? $data["token"] : $password') !== false,
+	'resource supplier login must compare credentials strictly without changing its token synchronization contract'
+);
 
 fwrite(STDOUT, "public API security regression checks passed" . PHP_EOL);

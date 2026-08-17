@@ -96,30 +96,49 @@ class AdminController extends AdminBaseController
 	public function addPost()
 	{
 		if ($this->request->isPost()) {
-			if (!empty($_POST["role_id"]) && is_array($_POST["role_id"])) {
-				$role_ids = $_POST["role_id"];
-				unset($_POST["role_id"]);
-				$result = $this->validate($this->request->param(), "User");
+			$params = $this->request->param();
+			if (!empty($params["role_id"]) && is_array($params["role_id"])) {
+				$role_ids = array_values(array_unique(array_map("intval", $params["role_id"])));
+				$result = $this->validate($params, "User");
 				if ($result !== true) {
 					$this->error($result);
 				} else {
-					$_POST["user_pass"] = cmf_password($_POST["user_pass"]);
-					$result = \think\Db::name("user")->insertGetId($_POST);
-					if ($result !== false) {
+					if (cmf_get_current_admin_id() != 1 && in_array(1, $role_ids, true)) {
+						$this->error("为了网站的安全，非网站创建者不可创建超级管理员！");
+					}
+					$valid_role_ids = \think\Db::name("role")->whereIn("id", $role_ids)->where("status", 1)->column("id");
+					$valid_role_ids = array_map("intval", $valid_role_ids);
+					if (count($valid_role_ids) !== count($role_ids)) {
+						$this->error("管理员角色不存在或已禁用！");
+					}
+					$insert = [
+						"user_login" => trim((string) $params["user_login"]),
+						"user_pass" => cmf_password($params["user_pass"]),
+						"user_email" => trim((string) $params["user_email"]),
+						"user_nickname" => trim((string) ($params["user_nickname"] ?? "")),
+						"user_type" => 1,
+						"user_status" => isset($params["user_status"]) && intval($params["user_status"]) === 0 ? 0 : 1,
+						"create_time" => time(),
+					];
+					\think\Db::startTrans();
+					try {
+						$result = \think\Db::name("user")->insertGetId($insert);
+						if (empty($result)) {
+							throw new \RuntimeException("管理员写入失败");
+						}
 						foreach ($role_ids as $role_id) {
-							if (cmf_get_current_admin_id() != 1 && $role_id == 1) {
-								$this->error("为了网站的安全，非网站创建者不可创建超级管理员！");
-							}
 							\think\Db::name("RoleUser")->insert(["role_id" => $role_id, "user_id" => $result]);
 						}
-						$description = "管理员添加成功 - user_id:" . $result . ",权限集:" . $role_ids;
-						active_log_final($description, $result);
-						$this->success("添加成功！", url("user/index"));
-					} else {
+						\think\Db::commit();
+					} catch (\Throwable $e) {
+						\think\Db::rollback();
 						$description = "管理员添加失败";
 						active_log_final($description);
 						$this->error("添加失败！");
 					}
+					$description = "管理员添加成功 - user_id:" . $result . ",权限集:" . implode(",", $role_ids);
+					active_log_final($description, $result);
+					$this->success("添加成功！", url("user/index"));
 				}
 			} else {
 				$this->error("请为此用户指定角色！");
@@ -358,19 +377,20 @@ class AdminController extends AdminBaseController
 	public function admin_action_log()
 	{
 		$data = $this->request->param();
-		$date = isset($data["time"]) ? $data["time"] : date("Y-m-d");
-		$filename = CMF_ROOT . "data/journal/" . $date . ".log";
+		$date = isset($data["time"]) ? (string) $data["time"] : date("Y-m-d");
+		$date_parts = explode("-", $date);
+		if (!preg_match("/^\\d{4}-\\d{2}-\\d{2}$/", $date) || count($date_parts) !== 3 || !checkdate(intval($date_parts[1]), intval($date_parts[2]), intval($date_parts[0]))) {
+			$date = date("Y-m-d");
+		}
+		$journal_dir = realpath(CMF_ROOT . "data/journal");
+		$filename = $journal_dir === false ? false : realpath($journal_dir . DIRECTORY_SEPARATOR . $date . ".log");
 		$logs = [];
-		if (file_exists_case($filename)) {
-			fopen($filename, "r");
-			$num = count(file($filename));
-			$file_hwnd = fopen($filename, "r");
-			$content = explode("\r\n", fread($file_hwnd, filesize($filename)));
-			fclose($file_hwnd);
+		$journal_prefix = $journal_dir === false ? "" : $journal_dir . DIRECTORY_SEPARATOR;
+		if (is_string($filename) && is_file($filename) && strncmp($filename, $journal_prefix, strlen($journal_prefix)) === 0) {
+			$content = file($filename, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+			$num = count($content);
 			foreach ($content as $k => $v) {
-				if ($v) {
-					$logs[$k] = json_decode($v, true);
-				}
+				$logs[$k] = json_decode($v, true);
 			}
 		} else {
 			$num = 0;

@@ -29,18 +29,24 @@ class PublicController extends \cmf\controller\HomeBaseController
 		} else {
 			$second = "second_phone";
 		}
+		$account = (string) $data["account"];
 		$clients = \think\Db::name("clients");
 		$clients->field("id,phone_code,phonenumber,email,password,second_verify,status,username");
-		$clients->where("phonenumber=\"" . $data["account"] . "\" OR email=\"" . $data["account"] . "\"");
+		$clients->where(function (\think\db\Query $query) use($account) {
+			$query->where("phonenumber", $account)->whereOr("email", $account);
+		});
 		$client = $clients->find();
 		if (empty($client["id"])) {
 			return json(["status" => 400, "msg" => "Account does not exist"]);
 		}
-		if ($client["phonenumber"] == $data["account"]) {
-			$data["account"] = $client["phone_code"] . $data["account"];
+		if ($client["phonenumber"] === $account) {
+			$data["account"] = $client["phone_code"] . $account;
 		}
-		if (\think\facade\Cache::get("verification_code_" . $second . $data["account"]) == $data["code"]) {
+		$verification_code_key = "verification_code_" . $second . $data["account"];
+		$cached_code = \think\facade\Cache::has($verification_code_key) ? \think\facade\Cache::get($verification_code_key) : null;
+		if (is_scalar($cached_code) && hash_equals((string) $cached_code, (string) $data["code"])) {
 			\think\facade\Cache::set("verification_success" . $data["account"], $data["code"], 1800);
+			\think\facade\Cache::rm($verification_code_key);
 			return json(["status" => 200, "msg" => "success"]);
 		} else {
 			return json(["status" => 400, "msg" => "Verification code error"]);

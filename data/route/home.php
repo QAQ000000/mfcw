@@ -79,7 +79,6 @@ think\facade\Route::get("[:html]", "home/view/index")->ext("html");
 think\facade\Route::get("[:html]/[:html2]", "home/view/index")->ext("html");
 think\facade\Route::get("[:html]/[:html2]/[:html3]", "home/view/index")->ext("html");
 think\facade\Route::get("demo/[:pid]/", "home/demo/demo/")->header("Access-Control-Allow-Origin", $origin)->allowCrossDomain();
-think\facade\Route::get("del_cwxt_home_login", "home/index/del_cwxt_home_login");
 think\facade\Route::group("", function () {
     think\facade\Route::get("index", "home/index/index");
     think\facade\Route::get("user_info", "home/user/index");

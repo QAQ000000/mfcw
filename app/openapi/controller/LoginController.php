@@ -343,10 +343,12 @@ class LoginController extends \cmf\controller\HomeBaseController
 		$register_email = intval(configuration("allow_register_email"));
 		$register_email_register_code = intval(configuration("allow_email_register_code"));
 		$register_phone = intval(configuration("allow_register_phone"));
+		$register_email_captcha = 0;
+		$register_phone_captcha = 0;
 		$is_captcha = intval(configuration("is_captcha"));
 		if (!empty($is_captcha)) {
-			$register_email_captcha = intval(configuration("allow_register_phone_captcha"));
-			$register_phone_captcha = intval(configuration("allow_register_email_captcha"));
+			$register_email_captcha = intval(configuration("allow_register_email_captcha"));
+			$register_phone_captcha = intval(configuration("allow_register_phone_captcha"));
 		}
 		if ($register_email) {
 			$dataRegister["register_email"]["captcha"] = intval($register_email_captcha);
@@ -387,7 +389,8 @@ class LoginController extends \cmf\controller\HomeBaseController
 			return json(["status" => 400, "msg" => "illegal parameter"]);
 		}
 		$param = $this->request->param();
-		if ($param["phone"]) {
+		$verification_code_key = "";
+		if (!empty($param["phone"])) {
 			$data = $param["phone"];
 			if (!configuration("allow_register_phone")) {
 				return json(["status" => 400, "msg" => "Mobile phone registration is not turned on"]);
@@ -415,24 +418,29 @@ class LoginController extends \cmf\controller\HomeBaseController
 			} else {
 				$account = str_replace("+", "", $data["phone_code"]) . $data["phone"];
 			}
-			if (\think\facade\Cache::get("verification_code_register_phone" . $account) != $data["code"]) {
+			$verification_code_key = "verification_code_register_phone" . $account;
+			if (!$this->verificationCodeMatches($verification_code_key, $data["code"] ?? null)) {
 				return json(["status" => 400, "msg" => "Verification code error"]);
 			}
 			$client = \think\Db::name("clients")->field("phone_code,phonenumber,email,password,second_verify,status")->where("phonenumber", $data["phone"])->find();
 			if (!empty($client)) {
 				return json(["status" => 400, "msg" => "This account already exists"]);
 			}
-		} elseif ($param["email"]) {
+		} elseif (!empty($param["email"])) {
 			$data = $param["email"];
 			if (!configuration("allow_register_email")) {
 				return json(["status" => 400, "msg" => "Email registration is not opened"]);
 			}
-			$validate = new \think\Validate(["email" => "require", "password" => "require|min:6|max:32", "qq" => "max:20", "username" => "max:20", "companyname" => "max:50", "address1" => "max:100"]);
+			$rules = ["email" => "require", "password" => "require|min:6|max:32", "qq" => "max:20", "username" => "max:20", "companyname" => "max:50", "address1" => "max:100"];
+			if (configuration("allow_email_register_code")) {
+				$rules["code"] = "require";
+			}
+			$validate = new \think\Validate($rules);
 			$validate->message(["email.require" => "Email can not be empty", "password.require" => "Password required", "password.min" => "Password must be at least 6 characters", "password.max" => "Password up to 32 characters", "code.require" => "Verification code required", "qq.max" => "qq no more than 20 characters", "username.max" => "Username must not exceed 20 characters", "companyname.max" => "Company name no more than 20 characters", "address1.max" => "Address no more than 20 characters"]);
 			if (!$validate->check($data)) {
 				return json(["status" => 400, "msg" => $validate->getError()]);
 			}
-			if (!!configuration("is_captcha") && !!configuration("allow_register_phone_captcha")) {
+			if (!!configuration("is_captcha") && !!configuration("allow_register_email_captcha")) {
 				if (empty($data["captcha"])) {
 					return json(["status" => 400, "msg" => "Graphic verification code cannot be empty"]);
 				} else {
@@ -445,13 +453,18 @@ class LoginController extends \cmf\controller\HomeBaseController
 					}
 				}
 			}
-			if (\think\facade\Cache::get("verification_code_register_email" . $data["email"]) != $data["code"]) {
-				return json(["status" => 400, "msg" => "Verification code error"]);
+			if (configuration("allow_email_register_code")) {
+				$verification_code_key = "verification_code_register_email" . $data["email"];
+				if (!$this->verificationCodeMatches($verification_code_key, $data["code"] ?? null)) {
+					return json(["status" => 400, "msg" => "Verification code error"]);
+				}
 			}
-			$client = \think\Db::name("clients")->field("phone_code,phonenumber,email,password,second_verify,status")->where("phonenumber", $data["email"])->find();
+			$client = \think\Db::name("clients")->field("phone_code,phonenumber,email,password,second_verify,status")->where("email", $data["email"])->find();
 			if (!empty($client)) {
 				return json(["status" => 400, "msg" => "This account already exists"]);
 			}
+		} else {
+			return json(["status" => 400, "msg" => "illegal parameter"]);
 		}
 		$login_register = configuration("login_register_custom_require") ? json_decode(configuration("login_register_custom_require"), true) : [];
 		if (!empty($login_register[0])) {
@@ -479,10 +492,10 @@ class LoginController extends \cmf\controller\HomeBaseController
 				\think\Db::name("customfieldsvalues")->insert(["fieldid" => $k, "relid" => $userId, "value" => $v, "create_time" => time()]);
 			}
 		}
-		if ($param["email"]) {
+		if (!empty($param["email"])) {
 			$email = new \app\common\logic\Email();
 			$email->sendEmailBase($userId, "注册成功", "general", true);
-		} elseif ($param["phone"]) {
+		} elseif (!empty($param["phone"])) {
 			$message_template_type = array_column(config("message_template_type"), "id", "name");
 			$sms = new \app\common\logic\Sms();
 			$client = check_type_is_use($message_template_type[strtolower("Registration_Success")], $userId, $sms);
@@ -504,7 +517,12 @@ class LoginController extends \cmf\controller\HomeBaseController
 		$userinfo["username"] = $data["system_fields"]["username"];
 		$jwt = createJwt($userinfo);
 		$userinfo["jwt"] = $jwt;
-		\think\facade\Cache::rm("code_" . $data["idtoken"]);
+		if ($verification_code_key !== "") {
+			\think\facade\Cache::rm($verification_code_key);
+		}
+		if (!empty($data["idtoken"])) {
+			\think\facade\Cache::rm("code_" . $data["idtoken"]);
+		}
 		return json(["jwt" => $jwt, "status" => 200, "msg" => "registration success"]);
 	}
 	/**
@@ -555,7 +573,8 @@ class LoginController extends \cmf\controller\HomeBaseController
 		}
 		$param = $this->request->param();
 		$clients = \think\Db::name("clients");
-		if ($param["phone"]) {
+		$verification_code_key = "";
+		if (!empty($param["phone"])) {
 			$data = $param["phone"];
 			if (!configuration("allow_login_phone")) {
 				return json(["status" => 400, "msg" => "The mobile phone login function is not turned on, and the password cannot be retrieved with the mobile phone"]);
@@ -590,12 +609,13 @@ class LoginController extends \cmf\controller\HomeBaseController
 			} else {
 				$account_phone = str_replace("+", "", $data["phone_code"]) . $data["phone"];
 			}
-			if (\think\facade\Cache::get("verification_code_pwreset_phone" . $account_phone) != $data["code"]) {
+			$verification_code_key = "verification_code_pwreset_phone" . $account_phone;
+			if (!$this->verificationCodeMatches($verification_code_key, $data["code"] ?? null)) {
 				return json(["status" => 400, "msg" => "Verification code error"]);
 			}
 			$active_log_final = "手机";
 			$account = $data["phone"];
-		} elseif ($param["email"]) {
+		} elseif (!empty($param["email"])) {
 			$data = $param["email"];
 			if (!configuration("allow_login_email")) {
 				return json(["status" => 400, "msg" => "The email login function is not turned on, and the email cannot be used to retrieve the password"]);
@@ -607,7 +627,7 @@ class LoginController extends \cmf\controller\HomeBaseController
 			if ($client["status"] != 1) {
 				return json(["status" => 400, "msg" => "The account has been deactivated/closed, please contact the administrator"]);
 			}
-			$validate = new \think\Validate(["email" => "require", "password" => "require|min:6|max:32"]);
+			$validate = new \think\Validate(["email" => "require", "password" => "require|min:6|max:32", "code" => "require"]);
 			$validate->message(["email.require" => "Mobile number cannot be empty", "password.require" => "Password required", "password.min" => "Password must be at least 6 characters", "password.max" => "Password up to 32 characters", "code.require" => "Verification code required"]);
 			if (!$validate->check($data)) {
 				return json(["status" => 400, "msg" => $validate->getError()]);
@@ -625,18 +645,32 @@ class LoginController extends \cmf\controller\HomeBaseController
 					}
 				}
 			}
-			if (\think\facade\Cache::get("verification_code_pwreset_email" . $data["email"]) != $data["code"]) {
+			$verification_code_key = "verification_code_pwreset_email" . $data["email"];
+			if (!$this->verificationCodeMatches($verification_code_key, $data["code"] ?? null)) {
 				return json(["status" => 400, "msg" => "Verification code error"]);
 			}
 			$active_log_final = "邮箱";
 			$account = $data["email"];
+		} else {
+			return json(["status" => 400, "msg" => "illegal parameter"]);
 		}
 		$_data = ["update_time" => time(), "password" => cmf_password($data["password"])];
 		\think\Db::name("clients")->where("id", $client["id"])->update($_data);
 		active_log_final(sprintf($this->lang["User_home_reset_pass"], $active_log_final, $account), $client["id"], 0, 0, 2);
-		hook("client_reset_password", ["uid" => $result["id"], "password" => html_entity_decode($data["password"], ENT_QUOTES)]);
-		\think\facade\Cache::rm("code_" . $data["idtoken"]);
+		hook("client_reset_password", ["uid" => $client["id"], "password" => html_entity_decode($data["password"], ENT_QUOTES)]);
+		\think\facade\Cache::rm($verification_code_key);
+		if (!empty($data["idtoken"])) {
+			\think\facade\Cache::rm("code_" . $data["idtoken"]);
+		}
 		return json(["status" => 200, "msg" => "Password reset successful"]);
+	}
+	private function verificationCodeMatches($key, $provided_code)
+	{
+		if (!is_scalar($provided_code) || (string) $provided_code === "" || !\think\facade\Cache::has($key)) {
+			return false;
+		}
+		$cached_code = \think\facade\Cache::get($key);
+		return is_scalar($cached_code) && hash_equals((string) $cached_code, (string) $provided_code);
 	}
 	/**
 	 * @title 二次验证信息

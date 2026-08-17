@@ -252,39 +252,34 @@ class AffiliateController extends \cmf\controller\HomeBaseController
 	}
 	public function affiliateRecord(\think\Request $request)
 	{
-		$page = input("page") ?? config("page");
-		$limit = input("limit") ?? config("limit");
-		$order = input("order") ?? "i.id";
-		$sort = input("sort") ?? "desc";
-		if (!!input("order")) {
-			$order = "i." . input("order");
-		} else {
-			$order = "i.id";
+		$page = max(1, intval(input("page") ?? config("page")));
+		$limit = min(50, max(1, intval(input("limit") ?? config("limit"))));
+		$order_fields = ["id" => "i.id", "i.id" => "i.id", "invoiceid" => "i.id", "status" => "i.status", "create_time" => "i.create_time", "type" => "i.type", "subtotal" => "i.subtotal", "amount" => "i.subtotal", "paid_time" => "i.paid_time", "username" => "c.username", "confirm_time" => "i.aff_sure_time"];
+		$order_param = (string) (input("order") ?? "id");
+		$order = $order_fields[$order_param] ?? "i.id";
+		$sort = strtolower((string) (input("sort") ?? "desc"));
+		if (!in_array($sort, ["asc", "desc"], true)) {
+			$sort = "desc";
 		}
 		$param = $request->param();
 		$id = $request->uid;
 		$uids = getids($id);
 		$ladder = getLadder($id, $uids);
 		$rs = $this->updateCommission($id, $uids, $ladder);
-		$total = \think\Db::name("invoices")->alias("i")->join("clients c", "i.uid=c.id")->leftJoin("currencies cu", "cu.id = c.currency")->leftJoin("orders o", "i.id=o.invoiceid")->field("i.id as invoiceid,i.is_aff,i.aff_commmission_bates_type,i.aff_commission,i.aff_commmission_bates,i.status,i.create_time,i.type,i.subtotal,i.paid_time,c.username,o.id,c.id as uid,cu.prefix,cu.suffix,i.aff_sure_time,i.aff_commission,i.aff_commmission_bates,i.aff_commmission_bates_type,i.is_aff")->where("i.delete_time", 0)->where("i.status", "in", "Paid,Refunded")->where("c.id", "in", $uids)->where(function (\think\db\Query $query) use($param) {
+		$filters = function (\think\db\Query $query) use($param) {
 			if (!empty($param["keywords"])) {
-				$search_desc = $param["keywords"];
-				$query->where("c.username like '%{$search_desc}%' OR i.subtotal like '%{$search_desc}%' OR i.create_time like '%{$search_desc}%'");
+				$search_desc = "%" . $param["keywords"] . "%";
+				$query->where(function (\think\db\Query $search_query) use($search_desc) {
+					$search_query->where("c.username", "like", $search_desc)->whereOr("i.subtotal", "like", $search_desc)->whereOr("i.create_time", "like", $search_desc);
+				});
 			}
 			if (!empty($param["type"])) {
 				$query->where("i.type", $param["type"]);
 			}
-		})->select()->toArray();
+		};
+		$total = \think\Db::name("invoices")->alias("i")->join("clients c", "i.uid=c.id")->leftJoin("currencies cu", "cu.id = c.currency")->leftJoin("orders o", "i.id=o.invoiceid")->field("i.id as invoiceid,i.is_aff,i.aff_commmission_bates_type,i.aff_commission,i.aff_commmission_bates,i.status,i.create_time,i.type,i.subtotal,i.paid_time,c.username,o.id,c.id as uid,cu.prefix,cu.suffix,i.aff_sure_time,i.aff_commission,i.aff_commmission_bates,i.aff_commmission_bates_type,i.is_aff")->where("i.delete_time", 0)->where("i.status", "in", "Paid,Refunded")->where("c.id", "in", $uids)->where($filters)->select()->toArray();
 		$total = $this->getCommission($total, $ladder, $id);
-		$rows = \think\Db::name("invoices")->alias("i")->join("clients c", "i.uid=c.id")->leftJoin("currencies cu", "cu.id = c.currency")->leftJoin("orders o", "i.id=o.invoiceid")->field("o.id,i.id as invoiceid,i.is_aff,i.aff_commmission_bates_type,i.aff_commission,i.aff_commmission_bates,i.status,i.create_time,i.type,i.subtotal,i.paid_time,c.username,c.id as uid,cu.prefix,cu.suffix,i.aff_sure_time")->where("i.delete_time", 0)->where("i.status", "in", "Paid,Refunded")->where("c.id", "in", $uids)->where(function (\think\db\Query $query) use($param) {
-			if (!empty($param["keywords"])) {
-				$search_desc = $param["keywords"];
-				$query->where("c.username like '%{$search_desc}%' OR i.subtotal like '%{$search_desc}%' OR i.create_time like '%{$search_desc}%'");
-			}
-			if (!empty($param["type"])) {
-				$query->where("i.type", $param["type"]);
-			}
-		})->page($page)->limit($limit)->order($order, $sort)->select()->toArray();
+		$rows = \think\Db::name("invoices")->alias("i")->join("clients c", "i.uid=c.id")->leftJoin("currencies cu", "cu.id = c.currency")->leftJoin("orders o", "i.id=o.invoiceid")->field("o.id,i.id as invoiceid,i.is_aff,i.aff_commmission_bates_type,i.aff_commission,i.aff_commmission_bates,i.status,i.create_time,i.type,i.subtotal,i.paid_time,c.username,c.id as uid,cu.prefix,cu.suffix,i.aff_sure_time")->where("i.delete_time", 0)->where("i.status", "in", "Paid,Refunded")->where("c.id", "in", $uids)->where($filters)->page($page)->limit($limit)->order($order, $sort)->select()->toArray();
 		$rows = $this->getCommission($rows, $ladder, $id);
 		$rows = array_values($rows);
 		foreach ($rows as $k => $v) {
@@ -402,31 +397,52 @@ class AffiliateController extends \cmf\controller\HomeBaseController
 	}
 	public function user()
 	{
-		$page = input("page") ?? config("page");
-		$limit = input("limit") ?? config("limit");
-		$order = input("order") ?? "a.id";
-		$sort = input("sort") ?? "desc";
-		if (!!input("order")) {
-			$order = "c." . input("order");
-		} else {
-			$order = "a.id";
+		$page = max(1, intval(input("page") ?? config("page")));
+		$limit = min(50, max(1, intval(input("limit") ?? config("limit"))));
+		$order_fields = ["id" => "c.id", "c.id" => "c.id", "create_time" => "c.create_time", "username" => "c.username", "companyname" => "c.companyname", "company_name" => "c.companyname", "lastlogin" => "c.lastlogin", "last_login_time" => "c.lastlogin", "email" => "c.email", "phonenumber" => "c.phonenumber"];
+		$order_param = (string) (input("order") ?? "");
+		$order = $order_param === "" ? "a.id" : ($order_fields[$order_param] ?? "a.id");
+		$sort = strtolower((string) (input("sort") ?? "desc"));
+		if (!in_array($sort, ["asc", "desc"], true)) {
+			$sort = "desc";
 		}
 		$uid = request()->uid;
 		$params = $this->request->param();
 		$data = \think\Db::name("affiliates")->field("id")->where("uid", $uid)->find();
-		$rows = \think\Db::name("affiliates_user")->alias("a")->join("clients c", "a.uid=c.id")->field("c.id,c.create_time,c.username,c.companyname company_name,c.lastlogin last_login_time,c.email,c.phonenumber")->where("a.affid", $data["id"])->where(function (\think\db\Query $query) use($params) {
+		$filters = function (\think\db\Query $query) use($params) {
 			if (!empty($params["username"])) {
-				$search_desc = $params["username"];
-				$query->where("c.username LIKE '%{$search_desc}%'");
+				$query->where("c.username", "like", "%" . $params["username"] . "%");
 			}
-		})->page($page)->limit($limit)->order($order, $sort)->select()->toArray();
-		$total = \think\Db::name("affiliates_user")->alias("a")->join("clients c", "a.uid=c.id")->where("a.affid", $data["id"])->where(function (\think\db\Query $query) use($params) {
-			if (!empty($params["username"])) {
-				$search_desc = $params["username"];
-				$query->where("c.username LIKE '%{$search_desc}%'");
-			}
-		})->count();
+		};
+		$rows = \think\Db::name("affiliates_user")->alias("a")->join("clients c", "a.uid=c.id")->field("c.id,c.create_time,c.username,c.companyname company_name,c.lastlogin last_login_time,c.email,c.phonenumber")->where("a.affid", $data["id"])->where($filters)->page($page)->limit($limit)->order($order, $sort)->select()->toArray();
+		foreach ($rows as &$row) {
+			$row["email"] = $this->maskEmail($row["email"] ?? "");
+			$row["phonenumber"] = $this->maskPhone($row["phonenumber"] ?? "");
+		}
+		unset($row);
+		$total = \think\Db::name("affiliates_user")->alias("a")->join("clients c", "a.uid=c.id")->where("a.affid", $data["id"])->where($filters)->count();
 		$data = ["user" => $rows, "total" => $total];
 		return json(["status" => 200, "msg" => lang("SUCCESS MESSAGE"), "data" => $data]);
+	}
+	private function maskEmail($email)
+	{
+		$email = (string) $email;
+		$separator = strpos($email, "@");
+		if ($separator === false) {
+			return $email === "" ? "" : substr($email, 0, 1) . "***";
+		}
+		return substr($email, 0, 1) . "***" . substr($email, $separator);
+	}
+	private function maskPhone($phone)
+	{
+		$phone = (string) $phone;
+		$length = strlen($phone);
+		if ($length <= 4) {
+			return $length === 0 ? "" : str_repeat("*", $length);
+		}
+		if ($length <= 7) {
+			return substr($phone, 0, 2) . str_repeat("*", $length - 4) . substr($phone, -2);
+		}
+		return substr($phone, 0, 3) . str_repeat("*", $length - 7) . substr($phone, -4);
 	}
 }

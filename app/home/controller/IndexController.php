@@ -99,32 +99,6 @@ class IndexController extends CommonController
 		return jsons(["status" => 200, "data" => $data]);
 	}
 	/**
-	 * @title 清除登录禁用缓存
-	 * @method GET
-	 * @url del_cwxt_home_login
-	 * @param ip:解封ip
-	 * @description 接口说明:销售列表
-	 * @return data:销售列表@
-	 * @author liyongjun
-	 */
-	public function del_cwxt_home_login()
-	{
-		$ip = get_client_ip(0, true);
-		if ($this->request->has("ip", "get")) {
-			$ip = $this->request->get("ip");
-		}
-		$key = "cwxt_home_login_" . $ip . "_";
-		$key_1_block = $key . "_1_block";
-		$key_2_block = $key . "_2_block";
-		\think\facade\Cache::rm($key_1_block);
-		\think\facade\Cache::rm($key_2_block);
-		$key_1 = $key . "_1";
-		$key_2 = $key . "_2";
-		\think\facade\Cache::rm($key_1);
-		\think\facade\Cache::rm($key_2);
-		return jsons(["status" => 200, "msg" => "请求成功"]);
-	}
-	/**
 	 * 时间 2020/6/23 16:48
 	 * @title 公共配置
 	 * @desc void

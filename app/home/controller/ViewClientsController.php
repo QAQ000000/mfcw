@@ -105,7 +105,7 @@ class ViewClientsController extends ViewBaseController
 				} else {
 					$redirect_url .= "&access_token=" . $token;
 				}
-				\think\facade\Cache::set("access_token", $token, 3600);
+				\think\facade\Cache::set("oauth_access_token_" . strtolower($token), $token, 3600);
 				header("location: {$redirect_url}");
 				exit;
 			} else {

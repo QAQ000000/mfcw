@@ -505,8 +505,9 @@ class LoginController extends \cmf\controller\HomeBaseController
 			if ($tmp["status"] == 400) {
 				return jsons($tmp);
 			}
-			if ($password == $result["password"]) {
-				$data = ["password" => $data["token"] ?: $password, "lastlogin" => time(), "lastloginip" => get_client_ip(0, true)];
+			$stored_password = (string) ($result["password"] ?? "");
+			if ($stored_password !== "" && hash_equals($stored_password, $password)) {
+				$data = ["password" => !empty($data["token"]) ? $data["token"] : $password, "lastlogin" => time(), "lastloginip" => get_client_ip(0, true)];
 				\think\Db::name("clients")->where("id", $result["id"])->update($data);
 				$userinfo["id"] = $result["id"];
 				$userinfo["username"] = $result["username"];
