@@ -53,6 +53,11 @@ class CronController extends AdminBaseController
 	 * @return      .cron_last_run_time:上次自动任务执行开始时间
 	 * @return      .cron_last_run_time_over:上次自动任务执行结束时间
 	 * @return      .diff_run_time:自动任务执行了多久:状态，绿色 或者红色，如果上次时间小于等于5分钟，状态就是正常，否则就是异常的红色
+	 * @return      .stock_cron_command:库存计划任务命令
+	 * @return      .stock_cron_last_run_time:上次库存计划任务执行开始时间
+	 * @return      .stock_cron_last_run_time_over:上次库存计划任务执行结束时间
+	 * @return      .stock_cron_status:库存计划任务状态 success正常 error异常 not_run未执行
+	 * @return      .stock_cron_last_run_error:上次库存计划任务错误
 	 * @return      .cron_host_terminate_high:是否开启产品删除功能高级设置
 	 * @return      .cron_host_terminate_time_hostingaccount:虚拟主机删除时间
 	 * @return      .cron_host_terminate_time_server:独立服务器删除时间
@@ -74,6 +79,7 @@ class CronController extends AdminBaseController
 		$data = getConfig(array_keys($cron_config));
 		$data = array_merge($cron_config, $data);
 		$data["cron_command"] = config("cron_command");
+		$data["stock_cron_command"] = "php " . CMF_ROOT . "think cron:stock";
 		$data["marking_cron_command"] = config("marking_cron_command");
 		$data["cron_last_run_time_over"] = configuration("cron_last_run_time_over");
 		if ($data["cron_last_run_time_over"] - $data["cron_last_run_time"] > 1200) {
@@ -83,6 +89,16 @@ class CronController extends AdminBaseController
 		}
 		if (time() - $data["cron_last_run_time_over"] > 900) {
 			$data["diff_run_time"] = -1;
+		}
+		$data["stock_cron_last_run_time"] = intval(configuration("stock_cron_last_run_time"));
+		$data["stock_cron_last_run_time_over"] = intval(configuration("stock_cron_last_run_time_over"));
+		$data["stock_cron_last_run_error"] = (string) configuration("stock_cron_last_run_error");
+		if ($data["stock_cron_last_run_time_over"] <= 0) {
+			$data["stock_cron_status"] = "not_run";
+		} elseif (intval(configuration("stock_cron_last_run_status")) !== 1 || time() - $data["stock_cron_last_run_time_over"] > 180) {
+			$data["stock_cron_status"] = "error";
+		} else {
+			$data["stock_cron_status"] = "success";
 		}
 		$result["status"] = 200;
 		$result["msg"] = lang("SUCCESS MESSAGE");

@@ -809,6 +809,99 @@ class Product
 		fclose($handle);
 		return $is_owner;
 	}
+	public function cronSyncInventory()
+	{
+		$apis = \think\Db::name("zjmf_finance_api")->field("id,name")->where("type", "zjmf_api")->select()->toArray();
+		$updated_count = 0;
+		$errors = [];
+		foreach ($apis as $api) {
+			$api_id = intval($api["id"]);
+			$api_name = $api["name"];
+			$updated_product_ids = [];
+			try {
+				$response = getZjmfUpstreamProductsInfo($api_id);
+				if (($response["status"] ?? 400) != 200) {
+					throw new \RuntimeException($response["msg"] ?? "上游库存接口请求失败");
+				}
+				$infos = $response["data"]["info"] ?? null;
+				if (!is_array($infos)) {
+					throw new \RuntimeException("上游库存接口返回格式错误");
+				}
+				$products = \think\Db::name("products")
+					->field("id,upstream_pid,upstream_version,upstream_stock_control,upstream_qty")
+					->where("api_type", "zjmf_api")
+					->where("zjmf_api_id", $api_id)
+					->where("upstream_pid", ">", 0)
+					->select()
+					->toArray();
+				$products_by_upstream = [];
+				foreach ($products as $product) {
+					$products_by_upstream[intval($product["upstream_pid"])][] = $product;
+				}
+				foreach ($infos as $info) {
+					$upstream_pid = intval($info["id"] ?? 0);
+					if ($upstream_pid <= 0 || empty($products_by_upstream[$upstream_pid])) {
+						continue;
+					}
+					if (!array_key_exists("stock_control", $info) || !array_key_exists("qty", $info)) {
+						throw new \RuntimeException("上游库存接口缺少库存字段");
+					}
+					$stock_control = intval($info["stock_control"]) === 1 ? 1 : 0;
+					$qty = max(0, intval($info["qty"]));
+					$incoming_version = intval($info["location_version"] ?? 0);
+					foreach ($products_by_upstream[$upstream_pid] as $product) {
+						if (intval($product["upstream_stock_control"]) === $stock_control && intval($product["upstream_qty"]) === $qty) {
+							continue;
+						}
+						$product_lock = $this->acquireCartSyncLock($product["id"], 120);
+						if ($product_lock === false) {
+							continue;
+						}
+						try {
+							$current_product = \think\Db::name("products")
+								->field("id,upstream_pid,upstream_version,upstream_stock_control,upstream_qty")
+								->where("id", $product["id"])
+								->find();
+							if (empty($current_product)
+								|| intval($current_product["upstream_pid"]) !== $upstream_pid
+								|| intval($current_product["upstream_version"]) !== intval($product["upstream_version"])
+								|| intval($current_product["upstream_stock_control"]) !== intval($product["upstream_stock_control"])
+								|| intval($current_product["upstream_qty"]) !== intval($product["upstream_qty"])) {
+								continue;
+							}
+							if ($incoming_version > 0 && intval($current_product["upstream_version"]) > $incoming_version) {
+								continue;
+							}
+							\think\Db::name("products")->where("id", $product["id"])->update([
+								"upstream_stock_control" => $stock_control,
+								"upstream_qty" => $qty,
+							]);
+							$updated_product_ids[] = intval($product["id"]);
+							$updated_count++;
+						} finally {
+							$this->releaseCartSyncLock($product_lock);
+						}
+					}
+				}
+			} catch (\Throwable $e) {
+				$error = "供应商'{$api_name}'库存同步失败:" . $e->getMessage();
+				$errors[] = $error;
+				active_log_final(ClientActivityLog::markInternal("定时任务" . $error, "supplier"), 0, 5);
+			} finally {
+				$updated_product_ids = array_values(array_unique($updated_product_ids));
+				if (!empty($updated_product_ids) && $this->refreshInventoryCache($updated_product_ids, "cron upstream inventory sync") !== true) {
+					$error = "供应商'{$api_name}'库存已更新，但库存缓存刷新失败";
+					$errors[] = $error;
+					active_log_final(ClientActivityLog::markInternal("定时任务" . $error, "supplier"), 0, 5);
+				}
+			}
+		}
+		return [
+			"status" => empty($errors) ? 200 : 400,
+			"updated" => $updated_count,
+			"errors" => $errors,
+		];
+	}
 	public function cronSyncProduct()
 	{
 		$apis = \think\Db::name("zjmf_finance_api")->field("id,name")->where("type", "zjmf_api")->select()->toArray();
