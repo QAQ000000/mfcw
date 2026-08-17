@@ -9,7 +9,7 @@ class JobCommon
 	public static function push($data, $queue = "default")
 	{
 		$data["queue_req"] = ["domain" => getDomain(), "rootUrl" => getRootUrl()];
-		return \think\Queue::push(static::class, $data, $queue);
+		\think\Queue::push(static::class, $data, $queue);
 	}
 	public static function later($data, $timer = 10, $queue = "default")
 	{
