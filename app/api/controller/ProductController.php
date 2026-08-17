@@ -155,9 +155,13 @@ class ProductController
 
                 $logic->updateDetailCache([$pid]);
 
+                $tmp = $logic->getDetailCache($pid);
+
             }
 
-            $tmp = $logic->getDetailCache($pid);
+            if (empty($tmp)) {
+                $tmp = $logic->getProducts([$pid]);
+            }
 
             if (isset($tmp[$pid])) {
                 $detail[$pid] = $tmp[$pid];

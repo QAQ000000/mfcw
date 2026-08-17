@@ -396,7 +396,7 @@ class CartController extends \cmf\controller\HomeBaseController
 			return json(["msg" => "Inventory shortage", "status" => 400]);
 		}
 		if ($product["api_type"] == "zjmf_api" || $product["api_type"] == "resource") {
-			$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 3, "GET");
+			$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 30, "GET");
 			if ($result["status"] == 200) {
 				$upstream_data = $result["data"];
 				if (empty($upstream_data["product"])) {
@@ -2012,7 +2012,7 @@ class CartController extends \cmf\controller\HomeBaseController
 			return json(["msg" => lang("CART_SETTLE_PRO_STOCK_CONTROL", [$product["name"]]), "status" => 400]);
 		}
 		if ($product["api_type"] == "zjmf_api" || $product["api_type"] == "resource") {
-			$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 3, "GET");
+			$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 30, "GET");
 			if ($result["status"] == 200) {
 				$upstream_data = $result["data"];
 				if (empty($upstream_data["product"])) {

@@ -367,7 +367,7 @@ class CartController extends CommonController
 			$product = \app\common\logic\Product::normalizeSupplierProductState($product);
 			if ($product["api_type"] === "zjmf_api" && !$product["hidden"]) {
 				try {
-					$upstream = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 3, "GET");
+					$upstream = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 30, "GET");
 					if (($upstream["status"] ?? 400) === 200 && !empty($upstream["data"]["product"])) {
 						$product["upstream_stock_control"] = intval($upstream["data"]["product"]["stock_control"] ?? 0);
 						$product["upstream_qty"] = intval($upstream["data"]["product"]["qty"] ?? 0);
@@ -2967,7 +2967,7 @@ class CartController extends CommonController
 				}
 			}
 			if ($product["api_type"] == "zjmf_api" || $product["api_type"] == "resource") {
-				$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 3, "GET");
+				$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 30, "GET");
 				if ($result["status"] == 200) {
 					$upstream_data = $result["data"];
 					if (empty($upstream_data["product"])) {
