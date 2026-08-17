@@ -612,9 +612,17 @@ class CartController extends \cmf\controller\HomeBaseController
 			$cart_data["products"] = $cart_products_filter;
 			}
 			if (!empty($pos_param["cart_data"])) {
+				if (!is_array($pos_param["cart_data"])) {
+					return json(["status" => 400, "msg" => "Cart product data is invalid"]);
+				}
+				$configoptions = $pos_param["cart_data"]["configoptions"] ?? [];
+				if (!is_array($configoptions)) {
+					return json(["status" => 400, "msg" => "Product configuration is invalid"]);
+				}
+				$pos_param["cart_data"]["configoptions"] = $shop->configfilter(intval($pos_param["cart_data"]["pid"] ?? 0), $configoptions);
 				$cart_data = [];
-			$cart_data["products"][0] = $pos_param["cart_data"];
-		}
+				$cart_data["products"][0] = $pos_param["cart_data"];
+			}
 		if (empty($cart_data["products"])) {
 			$result["status"] = 400;
 			$result["msg"] = "Cart cannot be empty";
