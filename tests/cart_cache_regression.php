@@ -203,16 +203,26 @@ assertTrue($failingCronCache->updateAttempts === 1, "cron must attempt a cache r
 assertTrue($failingCronCache->invalidateAttempts === 1, "cron must attempt best-effort invalidation after rebuild failure");
 
 $root = dirname(__DIR__);
-sourceContains($root . "/app/home/controller/CartController.php", [
-	'"timeout" => 2',
-	'(new \\app\\common\\logic\\Product())->syncProduct($param);',
-]);
 sourceDoesNotContain($root . "/app/home/controller/CartController.php", [
+	'"page_type" => "set_config_page"',
+	'(new \\app\\common\\logic\\Product())->syncProduct($param);',
+	'"cart/stock_control"',
+	'商品库存校验暂不可用',
 	'queueProductSyncForCart',
 	'syncProductForCart',
 	'validateCartProductSnapshot',
 	'supplier_version',
 ]);
+sourceContains($root . "/app/common/logic/ConfigOptions.php", [
+	'->whereIn("config_id", $configIds)',
+	'->whereIn("relid", $suboptionIds)',
+	'$suboptions = $suboptionsByConfig[$cid] ?? [];',
+	'$pricings = $pricingsBySub[$subid] ?? [];',
+]);
+$configOptionsSource = file_get_contents($root . "/app/common/logic/ConfigOptions.php");
+preg_match('/public function getConfigInfo\(.*?public function configShow/s', $configOptionsSource, $getConfigInfoMethod);
+assertTrue(substr_count($getConfigInfoMethod[0], 'Db::name("product_config_options_sub")') === 1, "getConfigInfo must load all suboptions in one query");
+assertTrue(substr_count($getConfigInfoMethod[0], 'Db::name("pricing")') === 1, "getConfigInfo must load all pricing rows in one query");
 sourceDoesNotContain($root . "/app/common/logic/Shop.php", [
 	'validateCartProductSnapshot',
 	'supplier_version',

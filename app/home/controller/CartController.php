@@ -360,33 +360,11 @@ class CartController extends CommonController
 			->alias("p")
 			->leftJoin("product_groups g", "g.id=p.gid")
 			->leftJoin("product_first_groups fg", "fg.id=g.gid")
-			->field("p.id,p.api_type,p.zjmf_api_id,p.upstream_pid,p.qty,p.stock_control,p.upstream_qty,p.upstream_stock_control,p.hidden,g.hidden as supplier_group_hidden,fg.hidden as supplier_first_group_hidden")
+			->field("p.id,p.api_type,p.qty,p.stock_control,p.upstream_qty,p.upstream_stock_control,p.hidden,g.hidden as supplier_group_hidden,fg.hidden as supplier_first_group_hidden")
 			->where("p.id", $pid)
 			->find();
 		if (!empty($product)) {
 			$product = \app\common\logic\Product::normalizeSupplierProductState($product);
-			if ($product["api_type"] === "zjmf_api" && !$product["hidden"]) {
-				try {
-					$upstream = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 30, "GET");
-					if (($upstream["status"] ?? 400) === 200 && !empty($upstream["data"]["product"])) {
-						$product["upstream_stock_control"] = intval($upstream["data"]["product"]["stock_control"] ?? 0);
-						$product["upstream_qty"] = intval($upstream["data"]["product"]["qty"] ?? 0);
-						$product = \app\common\logic\Product::normalizeSupplierProductState($product);
-					} elseif (($upstream["status"] ?? 400) === 200) {
-						$product["hidden"] = 1;
-					} else {
-						throw new \RuntimeException((string) ($upstream["msg"] ?? "upstream stock validation failed"));
-					}
-				} catch (\Throwable $e) {
-					try {
-						active_log_final(\app\common\logic\ClientActivityLog::markInternal("结算库存校验失败,本地#PRODUCT ID:{$pid},报错信息:" . $e->getMessage(), "supplier"), 0, 5);
-					} catch (\Throwable $logException) {
-						error_log("Failed to record supplier stock validation error: " . $logException->getMessage());
-					}
-					$product["stock_control"] = 1;
-					$product["qty"] = 0;
-				}
-			}
 			$product = ["qty" => $product["qty"], "stock_control" => $product["stock_control"], "hidden" => $product["hidden"]];
 		}
 		$data = ["product" => $product];
@@ -1217,15 +1195,6 @@ class CartController extends CommonController
 		}
 		if ($pro["hidden"] == 1 && $pro["api_type"] == "resource") {
 			return jsons(["status" => 400, "msg" => "商品不存在"]);
-		}
-		if ($pro["api_type"] == "zjmf_api") {
-			$zjmf_finance_api_id = $pro["zjmf_api_id"];
-			$upstream_pid = $pro["upstream_pid"];
-			$api = \think\Db::name("zjmf_finance_api")->where("id", $zjmf_finance_api_id)->find();
-			if ($api["auto_update"] == 1) {
-				$param = ["pid" => $pid, "zjmf_finance_api_id" => $zjmf_finance_api_id, "upstream_pid" => $upstream_pid, "timeout" => 2, "page_type" => "set_config_page", "upstream_price_type" => $pro["upstream_price_type"], "upstream_price_value" => $pro["upstream_price_value"]];
-				(new \app\common\logic\Product())->syncProduct($param);
-			}
 		}
 		$servers = \think\Db::name("products")->alias("p")->field("s.id,s.name,s.noc")->leftJoin("server_groups sg", "sg.id = p.server_group")->leftJoin("servers s", "s.gid = sg.id")->where("p.id", $pid)->select()->toArray();
 		$serversfilter = [];
@@ -2917,14 +2886,15 @@ class CartController extends CommonController
 			}
 				$os = isset($param["os"]) ? $param["os"] : [];
 				$shop = new \app\common\logic\Shop($uid);
-			$product = \think\Db::name("products")->field("host,password,name,is_truename,stock_control,qty,zjmf_api_id,upstream_pid,api_type")->where("id", $pid)->find();
+			$product = \think\Db::name("products")->field("host,password,name,is_truename,stock_control,qty,upstream_stock_control,upstream_qty,hidden,api_type")->where("id", $pid)->find();
+			$product = \app\common\logic\Product::normalizeSupplierProductState($product);
+			if ($product["hidden"]) {
+				return jsons(["status" => 400, "msg" => "商品不存在"]);
+			}
 			if (!judgeOntrialNum($pid, $uid, $qty) && $billingcycle == "ontrial") {
 				return jsons(["status" => 400, "msg" => lang("CART_ONTRIAL_NUM", [$product["name"]])]);
 			}
-			if (!empty($product["stock_control"]) && $product["qty"] <= 0) {
-				return jsons(["msg" => lang("CART_SETTLE_PRO_STOCK_CONTROL", [$product["name"]]), "status" => 400]);
-			}
-			if (!empty($product["stock_control"]) && isset($param["is_api"]) && $param["is_api"] && $product["qty"] < ($param["qty"] ?? 1)) {
+			if (!empty($product["stock_control"]) && $product["qty"] < $qty) {
 				return jsons(["msg" => lang("CART_SETTLE_PRO_STOCK_CONTROL", [$product["name"]]), "status" => 400]);
 			}
 			if (isset($param["is_api"]) && $param["is_api"]) {
@@ -2964,25 +2934,6 @@ class CartController extends CommonController
 							return json(["status" => 400, "msg" => lang("CART_SETTLE_CLIENT_COUNT_ERROR", [$value["name"]])]);
 						}
 					}
-				}
-			}
-			if ($product["api_type"] == "zjmf_api" || $product["api_type"] == "resource") {
-				$result = zjmfCurl($product["zjmf_api_id"], "cart/stock_control", ["pid" => $product["upstream_pid"]], 30, "GET");
-				if ($result["status"] == 200) {
-					$upstream_data = $result["data"];
-					if (empty($upstream_data["product"])) {
-						return jsons(["status" => 400, "msg" => "商品缺货"]);
-					}
-						if ($upstream_data["product"]["hidden"] == 1) {
-							\think\Db::name("products")->where("id", $pid)->update(["hidden" => 1]);
-							(new \app\common\logic\Product())->invalidateCacheOrMarkDirty([$pid], "upstream product hidden in home cart");
-							return jsons(["status" => 400, "msg" => "商品不存在"]);
-					}
-					if ($upstream_data["product"]["stock_control"] && $upstream_data["product"]["qty"] < $qty) {
-						return jsons(["status" => 400, "msg" => lang("CART_SETTLE_PRO_STOCK_CONTROL", [$product["name"]])]);
-					}
-				} else {
-					return jsons(["status" => 400, "msg" => "商品库存校验暂不可用，请稍后重试"]);
 				}
 			}
 			$host_data = json_decode($product["host"], true);

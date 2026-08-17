@@ -86,6 +86,26 @@ class ConfigOptions
 			}
 		})->order("pco.order ASC")->order("pco.id asc")->select()->toArray();
 		$product = \think\Db::name("products")->field("api_type,upstream_price_type,upstream_price_value")->where("id", $pid)->find();
+		$configIds = array_values(array_filter(array_column($configgroups, "id")));
+		$suboptionsByConfig = [];
+		$pricingsBySub = [];
+		if (!empty($configIds)) {
+			$suboptionsQuery = \think\Db::name("product_config_options_sub")->whereIn("config_id", $configIds);
+			if (!$admin) {
+				$suboptionsQuery->where("hidden", 0);
+			}
+			$allSuboptions = $suboptionsQuery->order("sort_order", "ASC")->order("id", "asc")->select()->toArray();
+			foreach ($allSuboptions as $suboption) {
+				$suboptionsByConfig[$suboption["config_id"]][] = $suboption;
+			}
+			$suboptionIds = array_column($allSuboptions, "id");
+			if (!empty($suboptionIds)) {
+				$allPricings = \think\Db::name("pricing")->where("type", "configoptions")->whereIn("relid", $suboptionIds)->select()->toArray();
+				foreach ($allPricings as $pricing) {
+					$pricingsBySub[$pricing["relid"]][] = $pricing;
+				}
+			}
+		}
 		$alloption = [];
 		if (!empty($configgroups)) {
 			foreach ($configgroups as $okey => $option) {
@@ -95,24 +115,15 @@ class ConfigOptions
 					if (!getEdition()) {
 						$option["qty_stage"] = 1;
 					}
+					$suboptions = $suboptionsByConfig[$cid] ?? [];
 					if ($option["option_type"] == 3) {
-						$suboptions = \think\Db::name("product_config_options_sub")->where("config_id", $cid)->where(function (\think\db\Query $query) use($admin) {
-							if (!$admin) {
-								$query->where("hidden", 0);
-							}
-						})->order("sort_order ASC")->order("id asc")->limit(1)->select()->toArray();
-					} else {
-						$suboptions = \think\Db::name("product_config_options_sub")->where("config_id", $cid)->where(function (\think\db\Query $query) use($admin) {
-							if (!$admin) {
-								$query->where("hidden", 0);
-							}
-						})->order("sort_order", "ASC")->order("id asc")->select()->toArray();
+						$suboptions = array_slice($suboptions, 0, 1);
 					}
 					if ($option["option_type"] == 5) {
 						foreach ($suboptions as $subkey => $suboption) {
 							if (!empty($suboption)) {
 								$subid = $suboption["id"];
-								$pricings = \think\Db::name("pricing")->where("type", "configoptions")->where("relid", $subid)->select();
+								$pricings = $pricingsBySub[$subid] ?? [];
 								$replace = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, "."];
 								$suboption_name = $suboption["option_name"];
 								$original_name = $suboption["option_name"] = explode("|", $suboption_name)[1] ? explode("|", $suboption_name)[1] : $suboption_name;
@@ -193,7 +204,7 @@ class ConfigOptions
 										$suboption["area"] = "";
 										$suboption["area_zh"] = "";
 									}
-									$pricings = \think\Db::name("pricing")->where("type", "configoptions")->where("relid", $subid)->select();
+									$pricings = $pricingsBySub[$subid] ?? [];
 									if (!empty($pricings[0])) {
 										foreach ($pricings as $pkey => $pricing) {
 											if (!empty($pricing)) {
@@ -217,7 +228,7 @@ class ConfigOptions
 									$original_name = $suboption["option_name"] = explode("|", $suboption_name)[1] ? explode("|", $suboption_name)[1] : $suboption_name;
 									$suboption["option_name"] = explode("^", $suboption["option_name"])[1] ? explode("^", $suboption["option_name"])[1] : $suboption["option_name"];
 									$suboption["option_name_first"] = explode("|", $suboption_name)[1] ? explode("|", $suboption_name)[0] : $suboption_name;
-									$pricings = \think\Db::name("pricing")->where("type", "configoptions")->where("relid", $subid)->select();
+									$pricings = $pricingsBySub[$subid] ?? [];
 									if (!empty($pricings[0])) {
 										foreach ($pricings as $pkey => $pricing) {
 											if (!empty($pricing)) {

@@ -72,8 +72,8 @@ assertUpstreamSyncCompatibility(strpos($homeRoutes, 'Route::get("cart/stock_cont
 assertUpstreamSyncCompatibility(strpos($productLogic, 'supplier_state_version') !== false, "old product sync caches must be rebuilt after the supplier-state contract changes");
 assertUpstreamSyncCompatibility(strpos($cartLogic, 'Product::normalizeSupplierProductState($product)') !== false, "classic cart configuration must display effective upstream inventory");
 assertUpstreamSyncCompatibility(strpos($homeCart, 'a.upstream_stock_control,a.upstream_qty') !== false && strpos($homeCart, 'normalizeSupplierProductState($product)') !== false, "cart lists and totals must display effective upstream inventory");
-assertUpstreamSyncCompatibility(strpos($homeCart, '"cart/stock_control", ["pid" => $product["upstream_pid"]], 30, "GET"') !== false, "stock validation must use the original upstream timeout");
-assertUpstreamSyncCompatibility(strpos($homeCart, '商品库存校验暂不可用，请稍后重试') !== false, "supplier stock validation failures must fail closed");
+assertUpstreamSyncCompatibility(strpos($homeCart, '"cart/stock_control"') === false, "cart inventory checks must use the local cron snapshot");
+assertUpstreamSyncCompatibility(strpos($homeCart, '商品库存校验暂不可用，请稍后重试') === false, "cart inventory checks must not depend on supplier availability");
 assertUpstreamSyncCompatibility(strpos($currency, 'invalidateProductCatalogCache(true)') !== false && strpos($currency, 'setInc("location_version")') !== false, "currency changes that affect supplier prices must increment product versions");
 assertUpstreamSyncCompatibility(strpos($hostLogic, '$post_data["supplier_version"] = (string) intval($host["upstream_version"]);') !== false, "reseller provisioning must forward the upstream location snapshot to maintained suppliers");
 
