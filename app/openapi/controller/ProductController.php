@@ -342,7 +342,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 		if (empty($hid)) {
 			return json(["status" => 400, "msg" => lang("ID_ERROR")]);
 		}
-		$host = \think\Db::name("host")->alias("a")->field("a.initiative_renew,a.productid,a.uid,a.firstpaymentamount,a.amount,a.create_time,a.nextduedate,a.billingcycle,a.productid,c.status,c.id,a.domainstatus,a.regdate,a.flag,a.promoid")->leftJoin("orders b", "b.id = a.orderid")->leftJoin("invoices c", "b.invoiceid = c.id")->where("a.id", $hid)->find();
+		$host = \think\Db::name("host")->alias("a")->field("a.initiative_renew,a.productid,a.uid,a.firstpaymentamount,a.amount,a.create_time,a.nextduedate,a.billingcycle,a.productid,c.status,c.id,a.domainstatus,a.regdate,a.flag,a.promoid")->leftJoin("orders b", "b.id = a.orderid")->leftJoin("invoices c", "b.invoiceid = c.id")->where("a.id", $hid)->where("a.uid", intval($this->request->uid))->find();
 		if (empty($host)) {
 			return json(["status" => 400, "msg" => lang("THE_PRODUCT_WAS_NOT_FOUND")]);
 		}
@@ -435,9 +435,14 @@ class ProductController extends \cmf\controller\HomeBaseController
 		$param = $this->request->param();
 		$hid = $param["id"];
 		$billingcycle = $param["billingcycle"];
+		$uid = intval($this->request->uid);
+		$owned_host = \think\Db::name("host")->field("id,payment")->where("id", $hid)->where("uid", $uid)->find();
+		if (empty($owned_host)) {
+			return json(["status" => 400, "msg" => lang("THE_PRODUCT_WAS_NOT_FOUND")]);
+		}
 		$renew = new \app\common\logic\Renew();
 		$res = $renew->renew($hid, $billingcycle);
-		$payment = \think\Db::name("host")->where("id", $hid)->value("payment");
+		$payment = $owned_host["payment"];
 		$gateway_list = gateway_list("gateways");
 		$payment_name_list = array_column($gateway_list, "name");
 		$payment = $payment ?: $payment_name_list[0];
@@ -455,7 +460,11 @@ class ProductController extends \cmf\controller\HomeBaseController
 		$param = $this->request->param();
 		$hid = $param["id"];
 		$initiative_renew = intval($param["initiative_renew"]);
-		\think\Db::name("host")->where("id", $hid)->update(["initiative_renew" => $initiative_renew]);
+		$owned_host = \think\Db::name("host")->field("id")->where("id", $hid)->where("uid", $uid)->find();
+		if (empty($owned_host)) {
+			return json(["status" => 400, "msg" => lang("THE_PRODUCT_WAS_NOT_FOUND")]);
+		}
+		\think\Db::name("host")->where("id", $hid)->where("uid", $uid)->update(["initiative_renew" => $initiative_renew]);
 		$text = ["关闭", "开启"];
 		active_log_final("设置产品-Host ID:{$hid} 的自动续费功能为: {$text[$initiative_renew]}", $uid, 2, $hid, 2);
 		return json(["status" => 200, "msg" => lang("SUCCESS MESSAGE")]);
@@ -574,6 +583,14 @@ class ProductController extends \cmf\controller\HomeBaseController
 		$param = $this->request->param();
 		$host_ids = $param["ids"];
 		$billincycles = $param["billingcycles"];
+		$uid = intval($this->request->uid);
+		$check_ids = is_array($host_ids) ? $host_ids : [$host_ids];
+		$check_ids = array_values(array_unique(array_filter(array_map("intval", $check_ids), function ($id) {
+			return $id > 0;
+		})));
+		if (empty($check_ids) || \think\Db::name("host")->where("uid", $uid)->whereIn("id", $check_ids)->count() !== count($check_ids)) {
+			return json(["status" => 400, "msg" => lang("THE_PRODUCT_WAS_NOT_FOUND")]);
+		}
 		$renew_logci = new \app\common\logic\Renew();
 		$res = $renew_logci->batchRenew($host_ids, $billincycles);
 		if ($res["status"] == 200 || $res["status"] == 1001) {

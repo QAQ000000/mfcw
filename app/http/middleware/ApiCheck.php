@@ -10,7 +10,7 @@ class ApiCheck
 	public function handle(\think\Request $request, \Closure $next)
 	{
 		$header = $request->header();
-		$token = $header["authorization"];
+		$token = $header["authorization"] ?? "";
 		if (empty($token)) {
 			$result["status"] = 400;
 			$result["msg"] = "请输入用户名密码";
@@ -22,7 +22,12 @@ class ApiCheck
 		} else {
 			$token = $token[0] ?? "";
 		}
-		$token = base64_decode($token);
+		$token = base64_decode($token, true);
+		if ($token === false || $token === "") {
+			$result["status"] = 400;
+			$result["msg"] = "参数错误";
+			return json($result);
+		}
 		$pos = strpos($token, ":");
 		if ($pos === false) {
 			$result["status"] = 400;
@@ -31,15 +36,22 @@ class ApiCheck
 		}
 		$username = substr($token, 0, $pos);
 		$password = substr($token, $pos + 1);
+		if ($username === "" || $password === "") {
+			$result["status"] = 400;
+			$result["msg"] = "参数错误";
+			return json($result);
+		}
 		$api = \think\Db::name("api")->where("username", $username)->where("password", md5($password))->find();
 		if (empty($api)) {
 			$result["status"] = 400;
 			$result["msg"] = "账号或密码错误";
 			return json($result);
 		}
-		$ip = explode(",", $api["ip"]);
+		$ip = array_values(array_filter(array_map("trim", explode(",", (string) ($api["ip"] ?? ""))), function ($value) {
+			return $value !== "";
+		}));
 		$client_ip = get_client_ip();
-		if (!in_array($client_ip, $ip)) {
+		if (empty($ip) || !in_array($client_ip, $ip, true)) {
 			$result["status"] = 400;
 			$result["msg"] = "当前IP不允许访问";
 			return json($result);
