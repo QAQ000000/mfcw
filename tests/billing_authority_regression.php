@@ -36,6 +36,9 @@ assertBillingAuthority(strpos($renewLogic, 'field("id,uid")->whereIn("id", $hids
 assertBillingAuthority(strpos($renewLogic, 'intval($host_owner["uid"]) !== $uid') !== false, "batch renewal must reject foreign hosts");
 assertBillingAuthority(strpos($renewLogic, '!$this->is_admin && $uid !== intval(request()->uid)') !== false, "single renewal must enforce authenticated ownership");
 assertBillingAuthority(strpos($renewLogic, '$this->is_admin && !empty($this->params)') !== false, "custom renewal amounts must be restricted to administrators");
+$singleRenewOwnerCheck = strpos($renewLogic, '(!$this->is_admin && $uid !== intval(request()->uid))');
+$singleRenewStateCheck = $singleRenewOwnerCheck === false ? false : strpos($renewLogic, '$host_data["status"] == "Unpaid"', $singleRenewOwnerCheck);
+assertBillingAuthority($singleRenewOwnerCheck !== false && $singleRenewStateCheck !== false, "single renewal must validate ownership before returning host state");
 
 foreach ([$homeUpgrade, $openApiProduct, $openApiHost] as $source) {
 	assertBillingAuthority(strpos($source, '"upgrade_down_config_" . intval(request()->uid) . "_" . $hid') !== false, "configuration upgrade caches must be isolated by user");

@@ -266,14 +266,7 @@ class Renew
 		$host_data = \think\Db::name("host")->field("h.id,h.uid,h.orderid,h.productid,h.domain,h.amount,h.promoid,h.payment,h.billingcycle,
             h.nextduedate,h.nextinvoicedate,h.domainstatus,h.dedicatedip,p.name as productname,p.pay_method,
             p.pay_type,i.status,h.flag,p.api_type,p.upstream_price_value")->alias("h")->leftJoin("products p", "p.id=h.productid")->leftJoin("orders o", "h.orderid = o.id")->leftJoin("invoices i", "o.invoiceid = i.id")->where("h.id", $hid)->where("i.delete_time", 0)->where("o.delete_time", 0)->find();
-		if (!empty($host_data)) {
-			if ($host_data["status"] == "Unpaid") {
-				return ["status" => 400, "msg" => lang("产品未支付，生成续费账单失败")];
-			}
-			if ($host_data["billingcycle"] == "ontrial" && $billingcycle == "ontrial") {
-				return ["status" => 400, "msg" => lang("续费周期无效")];
-			}
-		} else {
+		if (empty($host_data)) {
 			$host_data = \think\Db::name("host")->field("h.id,h.uid,h.orderid,h.productid,h.domain,h.amount,h.promoid,h.payment,h.billingcycle,
                 h.nextduedate,h.nextinvoicedate,h.domainstatus,h.dedicatedip,p.name as productname,p.pay_method,
                 p.pay_type,h.flag,p.api_type,p.upstream_price_value")->alias("h")->leftJoin("products p", "p.id=h.productid")->where("h.id", $hid)->find();
@@ -284,6 +277,12 @@ class Renew
 		$uid = intval($host_data["uid"]);
 		if ((!$this->is_admin && $uid !== intval(request()->uid)) || ($this->is_admin && $this->uid && $uid !== intval($this->uid))) {
 			return ["status" => 400, "msg" => "非法操作"];
+		}
+		if (isset($host_data["status"]) && $host_data["status"] == "Unpaid") {
+			return ["status" => 400, "msg" => lang("产品未支付，生成续费账单失败")];
+		}
+		if ($host_data["billingcycle"] == "ontrial" && $billingcycle == "ontrial") {
+			return ["status" => 400, "msg" => lang("续费周期无效")];
 		}
 		$promoid = $host_data["promoid"];
 		$currency_id = priorityCurrency($uid);
