@@ -25,13 +25,22 @@ class Upgrade
 		}
 		return true;
 	}
-	public function judgeUpgradeConfigError($hid, $type = "configoptions")
+	public function judgeUpgradeConfigError($hid, $type = "configoptions", $uid = 0)
 	{
-		$upgrade_product = \think\Db::name("product_upgrade_products")->alias("a")->leftJoin("host b", "a.product_id = b.productid")->where("b.id", $hid)->find();
+		$uid = intval($uid);
+		$upgrade_product_query = \think\Db::name("product_upgrade_products")->alias("a")->leftJoin("host b", "a.product_id = b.productid")->where("b.id", $hid);
+		if ($uid > 0) {
+			$upgrade_product_query->where("b.uid", $uid);
+		}
+		$upgrade_product = $upgrade_product_query->find();
 		if ($type == "product" && empty($upgrade_product)) {
 			throw new \think\Exception("当前产品无法升级或降级可配置项");
 		}
-		$host = \think\Db::name("host")->alias("a")->leftJoin("products b", "a.productid = b.id")->where("a.id", $hid)->where("a.domainstatus", "Active")->find();
+		$host_query = \think\Db::name("host")->alias("a")->leftJoin("products b", "a.productid = b.id")->where("a.id", $hid)->where("a.domainstatus", "Active");
+		if ($uid > 0) {
+			$host_query->where("a.uid", $uid);
+		}
+		$host = $host_query->find();
 		if (empty($host)) {
 			throw new \think\Exception("产品未激活");
 		}
@@ -470,7 +479,7 @@ class Upgrade
 			$is_zjmf_api = false;
 		}
 		$uid = $host["uid"];
-		if ($checkout && !$admin && request()->uid != $uid) {
+		if (!$admin && intval(request()->uid) !== intval($uid)) {
 			return ["status" => 400, "msg" => "非法操作"];
 		}
 		$regdate = $host["regdate"];
@@ -554,10 +563,6 @@ class Upgrade
 								$old_sub_pricing = $old_sub_pricing * $old_grade;
 								$new_sub_pricing_total = $new_sub_pricing_total * $grade;
 							}
-							if (!empty($percent_value)) {
-								$old_sub_pricing = $old_sub_pricing * $percent_value;
-								$new_sub_pricing_total = $new_sub_pricing_total * $percent_value;
-							}
 							$diff_sub = bcsub($new_sub_pricing_total, $old_sub_pricing, 20);
 							$old_option_total += $old_sub_pricing;
 							$new_option_total += $new_sub_pricing_total;
@@ -637,10 +642,6 @@ class Upgrade
 						if ($host["api_type"] == "resource") {
 							$old_sub_pricing = $old_sub_pricing * $old_grade;
 							$new_sub_pricing = $new_sub_pricing * $grade;
-						}
-						if (!empty($percent_value)) {
-							$old_sub_pricing = $old_sub_pricing * $percent_value;
-							$new_sub_pricing = $new_sub_pricing * $percent_value;
 						}
 						$diff_sub = bcsub($new_sub_pricing, $old_sub_pricing, 2);
 						$old_option_total += $old_sub_pricing;
@@ -1490,7 +1491,7 @@ class Upgrade
 		$currency_id = priorityCurrency($uid, $currency);
 		$currency = (new Currencies())->getCurrencies("id,code,prefix,suffix", $currency_id)[0];
 		$old_host = \think\Db::name("product_groups")->alias("pg")->field("concat(pg.name,\"-\",p.name) as host,h.regdate,h.flag,h.uid,h.domain,p.description,p.id as pid,p.name as pname,h.firstpaymentamount,h.amount,h.billingcycle,h.nextduedate,p.pay_type")->leftJoin("products p", "p.gid = pg.id")->leftJoin("host h", "h.productid = p.id")->where("h.id", $hid)->find();
-		if ($checkout && $uid != $old_host["uid"]) {
+		if (intval($uid) !== intval($old_host["uid"])) {
 			return ["status" => 400, "msg" => "非法操作"];
 		}
 		$old_start = $old_host["regdate"];
@@ -1562,9 +1563,6 @@ class Upgrade
 				if ($new_product["api_type"] == "resource" && function_exists("resourceUserGradePercent")) {
 					$new_option_price["selrecurring"] = $new_option_price["selrecurring"] * $grade;
 				}
-				if (!empty($percent_value)) {
-					$new_option_price["selrecurring"] = $new_option_price["selrecurring"] * $percent_value;
-				}
 				if ($new_option_price["is_rebate"]) {
 					if ($flag["type"] == 1) {
 						$bates = $flag["bates"] / 100;
@@ -1589,9 +1587,6 @@ class Upgrade
 		}
 		if ($new_product["api_type"] == "resource" && function_exists("resourceUserGradePercent")) {
 			$new_price = $new_price * $grade;
-		}
-		if (!empty($percent_value)) {
-			$new_price = $new_price * $percent_value;
 		}
 		if ($flag["type"] == 1) {
 			$bates = $flag["bates"] / 100;

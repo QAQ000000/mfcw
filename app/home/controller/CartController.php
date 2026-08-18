@@ -2392,21 +2392,6 @@ class CartController extends CommonController
 					$product_rebate_price = bcmul($product_rebate_price, $percent);
 					$product_rebate_setupfee = bcmul($product_rebate_setupfee, $percent);
 				}
-				$param = $this->request->param();
-				if (isset($param["resource_percent_value"])) {
-					$resource_percent_value = $param["resource_percent_value"];
-					$price_setup = bcmul($price_setup, $resource_percent_value);
-					$price_cycle = bcmul($price_cycle, $resource_percent_value);
-					$product_base_sale = bcmul($product_base_sale, $resource_percent_value);
-					$config_base_sale_setupfee = bcmul($config_base_sale_setupfee, $resource_percent_value);
-					$product_base_sale_price = $product_base_sale - $config_base_sale_setupfee;
-					foreach ($configoptions_base_sale as &$m) {
-						$m["config_base_sale"] = bcmul($m["config_base_sale"], $resource_percent_value);
-						$m["config_base_sale_setupfee"] = bcmul($m["config_base_sale_setupfee"], $resource_percent_value);
-					}
-					$product_rebate_price = bcmul($product_rebate_price, $resource_percent_value);
-					$product_rebate_setupfee = bcmul($product_rebate_setupfee, $resource_percent_value);
-				}
 				$product_total_price = bcadd($price_setup, $price_cycle);
 				if ($product_total_price < 0) {
 					$product_total_price = 0;

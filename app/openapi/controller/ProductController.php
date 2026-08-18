@@ -622,7 +622,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 		$data["currency"] = $currency;
 		$upgrade_logic = new \app\common\logic\Upgrade();
 		try {
-			$upgrade_logic->judgeUpgradeConfigError($hid);
+			$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid));
 		} catch (\Throwable $e) {
 			return json(["status" => 400, "msg" => $e->getMessage()]);
 		}
@@ -718,7 +718,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 		$data["currency"] = $currency;
 		$upgrade_logic = new \app\common\logic\Upgrade();
 		try {
-			$upgrade_logic->judgeUpgradeConfigError($hid);
+			$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid));
 		} catch (\Throwable $e) {
 			return json(["status" => 400, "msg" => $e->getMessage()]);
 		}
@@ -833,7 +833,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 				return json(["status" => 400, "msg" => "ID error"]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid)) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid))) {
 				return json(["status" => 400, "msg" => "Configurable items cannot be upgraded or downgraded for the current product"]);
 			}
 			$configoptions = $param["configoption"];
@@ -843,7 +843,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 			$data["hid"] = $hid;
 			$data["configoptions"] = $configoptions;
 			if (!empty($configoptions) && is_array($configoptions)) {
-				cache("upgrade_down_config_" . $hid, $data, 86400);
+				cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 				$promo_code = $data["promo_code"] ?: "";
 				$uid = request()->uid;
 				$currencyid = priorityCurrency($uid);
@@ -879,7 +879,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 				return json(["status" => 400, "msg" => lang("ID_ERROR")]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid)) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid))) {
 				return json(["status" => 400, "msg" => "The current product cannot upgrade or downgrade configurable items"]);
 			}
 			$configoptions = $param["configoption"];
@@ -889,7 +889,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 			$data["hid"] = $hid;
 			$data["configoptions"] = $configoptions;
 			if (!empty($configoptions) && is_array($configoptions)) {
-				cache("upgrade_down_config_" . $hid, $data, 86400);
+				cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 				$promo_code = $data["promo_code"] ?: "";
 				$currencyid = intval($param["currencyid"]);
 				$uid = request()->uid;
@@ -913,7 +913,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 				return json(["status" => 400, "msg" => lang("ID_ERROR")]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid)) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid))) {
 				return json(["status" => 400, "msg" => "Invalid offer code"]);
 			}
 			$promo_code = $param["pormo_code"];
@@ -922,12 +922,12 @@ class ProductController extends \cmf\controller\HomeBaseController
 				$result["msg"] = "Invalid offer code";
 				return json($result);
 			}
-			$data = cache("upgrade_down_config_" . $hid);
+			$data = cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid);
 			if (!$data) {
 				return json(["status" => 400, "msg" => "Invalid offer code"]);
 			}
 			$data["promo_code"] = $promo_code;
-			cache("upgrade_down_config_" . $hid, $data, 86400);
+			cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 			$currencyid = intval($data["currencyid"]);
 			$configoptions = $data["configoptions"];
 			$uid = request()->uid;
@@ -948,16 +948,16 @@ class ProductController extends \cmf\controller\HomeBaseController
 				return json(["status" => 400, "msg" => lang("ID_ERROR")]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid)) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid))) {
 				return json(["status" => 400, "msg" => "The current product cannot upgrade or downgrade configurable items"]);
 			}
-			$data = cache("upgrade_down_config_" . $hid);
+			$data = cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid);
 			if (!$data) {
 				return json(["status" => 400, "msg" => "Please select a configuration item"]);
 			}
-			\think\Db::name("host")->where("id", $hid)->update(["promoid" => 0]);
+			\think\Db::name("host")->where("id", $hid)->where("uid", intval(request()->uid))->update(["promoid" => 0]);
 			$data["promo_code"] = "";
-			cache("upgrade_down_config_" . $hid, $data, 86400);
+			cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 			$currencyid = intval($data["currencyid"]);
 			$configoptions = $data["configoptions"];
 			$uid = request()->uid;
@@ -978,10 +978,10 @@ class ProductController extends \cmf\controller\HomeBaseController
 				return json(["status" => 400, "msg" => "ID error"]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid)) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid))) {
 				return json(["status" => 400, "msg" => "Configurable items cannot be upgraded or downgraded for the current product"]);
 			}
-			$data = cache("upgrade_down_config_" . $hid);
+			$data = cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid);
 			if (!$data) {
 				return json(["status" => 400, "msg" => "Please select a configuration item"]);
 			}
@@ -990,10 +990,10 @@ class ProductController extends \cmf\controller\HomeBaseController
 			$uid = request()->uid;
 			$currencyid = priorityCurrency($uid);
 			$payment = \think\Db::name("host")->where("id", $hid)->value("payment");
-			if (cache(md5(serialize($data) . "-" . $hid . "-" . get_client_ip()))) {
+			if (cache(md5(serialize($data) . "-" . intval(request()->uid) . "-" . $hid . "-" . get_client_ip()))) {
 				return json(["status" => 400, "msg" => "Requests are too frequent"]);
 			}
-			cache(md5(serialize($data) . "-" . $hid . "-" . get_client_ip()), "upgrade config", 20);
+			cache(md5(serialize($data) . "-" . intval(request()->uid) . "-" . $hid . "-" . get_client_ip()), "upgrade config", 20);
 			$productid = \think\Db::name("host")->where("id", $hid)->value("productid");
 			$configoption_res = \think\Db::name("host_config_options")->where("relid", $hid)->select()->toArray();
 			$configoption = [];
@@ -1008,9 +1008,8 @@ class ProductController extends \cmf\controller\HomeBaseController
 			if ($msg) {
 				return json(["status" => 400, "msg" => $msg]);
 			}
-			$percent_value = $param["resource_percent_value"] ?: "";
 			if (!empty($configoptions) && is_array($configoptions)) {
-				$re = $upgrade_logic->upgradeConfigCommon($hid, $configoptions, $currencyid, false, $promo_code, $payment, true, $percent_value);
+				$re = $upgrade_logic->upgradeConfigCommon($hid, $configoptions, $currencyid, false, $promo_code, $payment, true);
 				return json($re);
 			} else {
 				return json(["status" => 400, "msg" => "Parameter error"]);
@@ -1028,10 +1027,10 @@ class ProductController extends \cmf\controller\HomeBaseController
 				return json(["status" => 400, "msg" => lang("ID_ERROR")]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid)) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid))) {
 				return json(["status" => 400, "msg" => "Configurable items cannot be upgraded or downgraded for the current product"]);
 			}
-			$data = cache("upgrade_down_config_" . $hid);
+			$data = cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid);
 			if (!$data) {
 				return json(["status" => 400, "msg" => "Please select a configuration item"]);
 			}
@@ -1042,10 +1041,10 @@ class ProductController extends \cmf\controller\HomeBaseController
 			$currencyid = priorityCurrency($uid, $currencyid);
 			$payment = \think\Db::name("host")->where("id", $hid)->value("payment");
 			$desc = "";
-			if (cache(md5(serialize($data) . "-" . $hid . "-" . get_client_ip()))) {
+			if (cache(md5(serialize($data) . "-" . intval(request()->uid) . "-" . $hid . "-" . get_client_ip()))) {
 				return json(["status" => 400, "msg" => "Requests are too frequent"]);
 			}
-			cache(md5(serialize($data) . "-" . $hid . "-" . get_client_ip()), "upgrade config", 20);
+			cache(md5(serialize($data) . "-" . intval(request()->uid) . "-" . $hid . "-" . get_client_ip()), "upgrade config", 20);
 			$productid = \think\Db::name("host")->where("id", $hid)->value("productid");
 			$configoption_res = \think\Db::name("host_config_options")->where("relid", $hid)->select()->toArray();
 			$configoption = [];
@@ -1060,9 +1059,8 @@ class ProductController extends \cmf\controller\HomeBaseController
 			if ($msg) {
 				return json(["status" => 400, "msg" => $msg]);
 			}
-			$percent_value = $param["resource_percent_value"] ?: "";
 			if (!empty($configoptions) && is_array($configoptions)) {
-				$re = $upgrade_logic->upgradeConfigCommon($hid, $configoptions, $currencyid, false, $promo_code, $payment, true, $percent_value);
+				$re = $upgrade_logic->upgradeConfigCommon($hid, $configoptions, $currencyid, false, $promo_code, $payment, true);
 				return json($re);
 			} else {
 				return json(["status" => 400, "msg" => "Configuration item is not an array"]);
@@ -1083,7 +1081,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 				return json(["status" => 400, "msg" => "ID error"]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product")) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product", intval(request()->uid))) {
 				return json(["status" => 400, "msg" => "Current product cannot be upgraded or downgraded"]);
 			}
 			$uid = request()->uid;
@@ -1131,7 +1129,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 				return json(["status" => 400, "msg" => "Please select an item"]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product")) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product", intval(request()->uid))) {
 				return json(["status" => 400, "msg" => "Current product cannot be upgraded or downgraded"]);
 			}
 			$billingcycle = $param["billingcycle"] ?: "";
@@ -1144,7 +1142,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 			$data["hid"] = $hid;
 			$data["pid"] = $new_pid;
 			$data["billingcycle"] = $billingcycle;
-			cache("upgrade_down_product_" . $hid, $data, 86400);
+			cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 			$promo_code = $param["promo_code"] ?: "";
 			$re = $upgrade_logic->upgradeProductCommon($hid, $new_pid, $billingcycle, "", $promo_code);
 			$return = $re["data"];
@@ -1165,7 +1163,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 		try {
 			$param = $this->request->param();
 			$hid = intval($param["id"]);
-			$data = cache("upgrade_down_product_" . $hid);
+			$data = cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid);
 			if (!$hid) {
 				return json(["status" => 400, "msg" => "ID error"]);
 			}
@@ -1175,7 +1173,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 				return json(["status" => 400, "msg" => "Illegal operation"]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product")) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product", intval(request()->uid))) {
 				return json(["status" => 400, "msg" => "Current product cannot be upgraded or downgraded"]);
 			}
 			$promo_code = $param["pormo_code"] ?: "";
@@ -1190,7 +1188,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 				return json(["status" => 400, "msg" => "Promo code is invalid"]);
 			}
 			$data["promo_code"] = $promo_code;
-			cache("upgrade_down_product_" . $hid, $data, 86400);
+			cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 			return json(["status" => 200, "msg" => "Promo code applied successfully"]);
 		} catch (\Throwable $e) {
 			return json(["status" => 400, "msg" => $e->getMessage()]);
@@ -1201,7 +1199,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 		try {
 			$param = $this->request->param();
 			$hid = intval($param["id"]);
-			$data = cache("upgrade_down_product_" . $hid);
+			$data = cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid);
 			if (!$hid) {
 				return json(["status" => 400, "msg" => "ID error"]);
 			}
@@ -1211,15 +1209,15 @@ class ProductController extends \cmf\controller\HomeBaseController
 				return json(["status" => 400, "msg" => "Illegal operation"]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product")) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product", intval(request()->uid))) {
 				return json(["status" => 400, "msg" => "Current product cannot be upgraded or downgraded"]);
 			}
 			if (!$data) {
 				return json(["status" => 400, "msg" => "Please select a new product"]);
 			}
-			\think\Db::name("host")->where("id", $hid)->update(["promoid" => 0]);
+			\think\Db::name("host")->where("id", $hid)->where("uid", intval(request()->uid))->update(["promoid" => 0]);
 			$data["promo_code"] = "";
-			cache("upgrade_down_product_" . $hid, $data, 86400);
+			cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 			return json(["status" => 200, "msg" => "Successfully removed promo code"]);
 		} catch (\Throwable $e) {
 			return json(["status" => 400, "msg" => $e->getMessage()]);
@@ -1233,7 +1231,7 @@ class ProductController extends \cmf\controller\HomeBaseController
 			return json(["status" => 400, "msg" => "ID error"]);
 		}
 		$upgrade_logic = new \app\common\logic\Upgrade();
-		if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product")) {
+		if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product", intval(request()->uid))) {
 			return json(["status" => 400, "msg" => "Current product cannot be upgraded or downgraded"]);
 		}
 		$uid = request()->uid;
@@ -1242,14 +1240,14 @@ class ProductController extends \cmf\controller\HomeBaseController
 			return json(["status" => 400, "msg" => "Illegal operation"]);
 		}
 		$payment = $param["payment"] ?: "";
-		$data = cache("upgrade_down_product_" . $hid);
+		$data = cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid);
 		if (!$data) {
 			return json(["status" => 400, "msg" => "Please select a new product"]);
 		}
-		if (cache(md5(serialize($data) . "-" . $hid . "-" . get_client_ip()))) {
+		if (cache(md5(serialize($data) . "-" . intval(request()->uid) . "-" . $hid . "-" . get_client_ip()))) {
 			return json(["status" => 400, "msg" => "Requests are too frequent"]);
 		}
-		cache(md5(serialize($data) . "-" . $hid . "-" . get_client_ip()), "upgrade", 20);
+		cache(md5(serialize($data) . "-" . intval(request()->uid) . "-" . $hid . "-" . get_client_ip()), "upgrade", 20);
 		$newpid = $data["pid"];
 		$billingcycle = $data["billingcycle"];
 		$promocode = $data["promo_code"] ?: "";

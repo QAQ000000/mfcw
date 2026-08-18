@@ -64,10 +64,26 @@ class Renew
 			$billingcycles = [$hids => $billingcycles];
 			$hids = [$hids];
 		}
-		if (!empty($this->params) && is_array($this->params)) {
+		$amount_custom = [];
+		if ($this->is_admin && !empty($this->params) && is_array($this->params)) {
 			$amount_custom = $this->params;
 		}
-		$uid = $this->uid ?: request()->uid;
+		$uid = intval($this->uid ?: request()->uid);
+		$hids = array_values(array_unique(array_filter(array_map("intval", (array) $hids), function ($hid) {
+			return $hid > 0;
+		})));
+		if ($uid <= 0 || empty($hids)) {
+			return ["status" => 400, "msg" => lang("ID_ERROR")];
+		}
+		$host_owners = \think\Db::name("host")->field("id,uid")->whereIn("id", $hids)->select()->toArray();
+		if (count($host_owners) !== count($hids)) {
+			return ["status" => 400, "msg" => lang("ID_ERROR")];
+		}
+		foreach ($host_owners as $host_owner) {
+			if ((!$this->is_admin || $this->uid) && intval($host_owner["uid"]) !== $uid) {
+				return ["status" => 400, "msg" => "非法操作"];
+			}
+		}
 		$payment = \think\Db::name("clients")->where("id", $uid)->value("defaultgateway");
 		if (!$payment) {
 			$gateway_list = gateway_list("gateways");
@@ -86,7 +102,6 @@ class Renew
 				} else {
 					$host_data = \think\Db::name("host")->field("h.id,h.uid,h.orderid,h.productid,h.domain,h.amount,h.promoid,h.payment,h.billingcycle,h.nextduedate,h.nextinvoicedate,h.domainstatus,h.dedicatedip,p.name as productname,p.pay_method,p.pay_type,h.flag")->alias("h")->leftJoin("products p", "p.id=h.productid")->where("h.id", $hid)->find();
 				}
-				$uid = $host_data["uid"];
 				$promoid = $host_data["promoid"];
 				$currency_id = priorityCurrency($uid);
 				$pid = $host_data["productid"];
@@ -251,7 +266,6 @@ class Renew
 		$host_data = \think\Db::name("host")->field("h.id,h.uid,h.orderid,h.productid,h.domain,h.amount,h.promoid,h.payment,h.billingcycle,
             h.nextduedate,h.nextinvoicedate,h.domainstatus,h.dedicatedip,p.name as productname,p.pay_method,
             p.pay_type,i.status,h.flag,p.api_type,p.upstream_price_value")->alias("h")->leftJoin("products p", "p.id=h.productid")->leftJoin("orders o", "h.orderid = o.id")->leftJoin("invoices i", "o.invoiceid = i.id")->where("h.id", $hid)->where("i.delete_time", 0)->where("o.delete_time", 0)->find();
-		$promoid = $host_data["promoid"];
 		if (!empty($host_data)) {
 			if ($host_data["status"] == "Unpaid") {
 				return ["status" => 400, "msg" => lang("产品未支付，生成续费账单失败")];
@@ -259,17 +273,21 @@ class Renew
 			if ($host_data["billingcycle"] == "ontrial" && $billingcycle == "ontrial") {
 				return ["status" => 400, "msg" => lang("续费周期无效")];
 			}
-			$uid = $host_data["uid"];
-			$currency_id = priorityCurrency($uid);
-			$pid = $host_data["productid"];
 		} else {
 			$host_data = \think\Db::name("host")->field("h.id,h.uid,h.orderid,h.productid,h.domain,h.amount,h.promoid,h.payment,h.billingcycle,
                 h.nextduedate,h.nextinvoicedate,h.domainstatus,h.dedicatedip,p.name as productname,p.pay_method,
                 p.pay_type,h.flag,p.api_type,p.upstream_price_value")->alias("h")->leftJoin("products p", "p.id=h.productid")->where("h.id", $hid)->find();
-			$uid = $host_data["uid"];
-			$currency_id = priorityCurrency($uid);
-			$pid = $host_data["productid"];
 		}
+		if (empty($host_data)) {
+			return ["status" => 400, "msg" => lang("ID_ERROR")];
+		}
+		$uid = intval($host_data["uid"]);
+		if ((!$this->is_admin && $uid !== intval(request()->uid)) || ($this->is_admin && $this->uid && $uid !== intval($this->uid))) {
+			return ["status" => 400, "msg" => "非法操作"];
+		}
+		$promoid = $host_data["promoid"];
+		$currency_id = priorityCurrency($uid);
+		$pid = $host_data["productid"];
 		if ($host_data["api_type"] == "resource") {
 			$billingcycle = $billingcycle ?: $host_data["billingcycle"];
 			$amount1 = $this->calculatedPrice($hid, $billingcycle, 1, $host_data["flag"]);
@@ -281,11 +299,6 @@ class Renew
 					$amount1 = $this->calculatedPrice($hid, $billingcycle, 1, $host_data["flag"]);
 					$amount = $amount1["price_cycle"];
 					$userdiscount = floatval($amount1["price_sale_cycle"]);
-					$param = request()->param();
-					if (isset($param["resource_handling"])) {
-						$amount = bcmul($amount, $param["resource_handling"], 2);
-						$userdiscount = bcmul($userdiscount, $param["resource_handling"], 2);
-					}
 				} else {
 					$amount = $host_data["amount"];
 					$userdiscount = 0;

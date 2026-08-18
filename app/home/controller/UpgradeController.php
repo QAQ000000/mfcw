@@ -57,7 +57,7 @@ class UpgradeController extends CommonController
 		$data["currency"] = $currency;
 		$upgrade_logic = new \app\common\logic\Upgrade();
 		try {
-			$upgrade_logic->judgeUpgradeConfigError($hid);
+			$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid));
 		} catch (\Throwable $e) {
 			return jsons(["status" => 400, "msg" => $e->getMessage()]);
 		}
@@ -236,9 +236,9 @@ class UpgradeController extends CommonController
 				if (!$hid) {
 					return jsons(["status" => 400, "msg" => lang("ID_ERROR")]);
 				}
-				cache("upgrade_down_config_" . $hid, null);
+				cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid, null);
 				$upgrade_logic = new \app\common\logic\Upgrade();
-				if (!$upgrade_logic->judgeUpgradeConfigError($hid)) {
+				if (!$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid))) {
 					return jsons(["status" => 400, "msg" => lang("当前产品无法升级或降级可配置项")]);
 				}
 				$configoptions = $params["configoption"];
@@ -257,7 +257,7 @@ class UpgradeController extends CommonController
                             }
                         }
                     }
-					cache("upgrade_down_config_" . $hid, $data, 86400);
+					cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 					return jsons(["status" => 200, "msg" => lang("SUCCESS MESSAGE")]);
 				} else {
 					return jsons(["status" => 400, "msg" => "配置项非数组"]);
@@ -286,10 +286,10 @@ class UpgradeController extends CommonController
 				return jsons(["status" => 400, "msg" => lang("ID_ERROR")]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid)) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid))) {
 				return jsons(["status" => 400, "msg" => lang("当前产品无法升级或降级可配置项")]);
 			}
-			$data = cache("upgrade_down_config_" . $hid);
+			$data = cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid);
 			if (!$data) {
 				return jsons(["status" => 400, "msg" => "请重新选择配置"]);
 			}
@@ -327,7 +327,7 @@ class UpgradeController extends CommonController
 					return jsons(["status" => 400, "msg" => lang("ID_ERROR")]);
 				}
 				$upgrade_logic = new \app\common\logic\Upgrade();
-				if (!$upgrade_logic->judgeUpgradeConfigError($hid)) {
+				if (!$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid))) {
 					return jsons(["status" => 400, "msg" => lang("优惠码无效")]);
 				}
 				$promo_code = $params["pormo_code"];
@@ -336,12 +336,12 @@ class UpgradeController extends CommonController
 					$result["msg"] = "优惠码无效";
 					return jsons($result);
 				}
-				$data = cache("upgrade_down_config_" . $hid);
+				$data = cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid);
 				if (!$data) {
 					return jsons(["status" => 400, "msg" => "优惠码无效"]);
 				}
 				$data["promo_code"] = $promo_code;
-				cache("upgrade_down_config_" . $hid, $data, 86400);
+				cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 				return jsons(["status" => 200, "msg" => "应用优惠码成功"]);
 			}
 			return jsons(["status" => 400, "msg" => lang("ERROR MESSAGE")]);
@@ -367,15 +367,15 @@ class UpgradeController extends CommonController
 					return jsons(["status" => 400, "msg" => lang("ID_ERROR")]);
 				}
 				$upgrade_logic = new \app\common\logic\Upgrade();
-				if (!$upgrade_logic->judgeUpgradeConfigError($hid)) {
+				if (!$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid))) {
 					return jsons(["status" => 400, "msg" => lang("当前产品无法升级或降级可配置项")]);
 				}
-				$data = cache("upgrade_down_config_" . $hid);
+				$data = cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid);
 				if (!$data) {
 					return jsons(["status" => 400, "msg" => "请重新选择配置"]);
 				}
 				$data["promo_code"] = "";
-				cache("upgrade_down_config_" . $hid, $data, 86400);
+				cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 				return jsons(["status" => 200, "msg" => "移除优惠码成功"]);
 			}
 			return jsons(["status" => 400, "msg" => lang("ERROR MESSAGE")]);
@@ -401,10 +401,10 @@ class UpgradeController extends CommonController
 					return jsons(["status" => 400, "msg" => lang("ID_ERROR")]);
 				}
 				$upgrade_logic = new \app\common\logic\Upgrade();
-				if (!$upgrade_logic->judgeUpgradeConfigError($hid)) {
+				if (!$upgrade_logic->judgeUpgradeConfigError($hid, "configoptions", intval(request()->uid))) {
 					return jsons(["status" => 400, "msg" => lang("当前产品无法升级或降级可配置项")]);
 				}
-				$data = cache("upgrade_down_config_" . $hid);
+				$data = cache("upgrade_down_config_" . intval(request()->uid) . "_" . $hid);
 				if (!$data) {
 					return jsons(["status" => 400, "msg" => "请重新选择配置"]);
 				}
@@ -415,10 +415,10 @@ class UpgradeController extends CommonController
 				$currencyid = priorityCurrency($uid, $currencyid);
 				$payment = \think\Db::name("host")->where("id", $hid)->value("payment");
 				$desc = "";
-				if (cache(md5(serialize($data) . "-" . $hid . "-" . get_client_ip()))) {
+				if (cache(md5(serialize($data) . "-" . intval(request()->uid) . "-" . $hid . "-" . get_client_ip()))) {
 					return jsons(["status" => 400, "msg" => "请求过于频繁"]);
 				}
-				cache(md5(serialize($data) . "-" . $hid . "-" . get_client_ip()), "upgrade config", 20);
+				cache(md5(serialize($data) . "-" . intval(request()->uid) . "-" . $hid . "-" . get_client_ip()), "upgrade config", 20);
 				$productid = \think\Db::name("host")->where("id", $hid)->value("productid");
 				$configoption_res = \think\Db::name("host_config_options")->where("relid", $hid)->select()->toArray();
 				$configoption = [];
@@ -433,9 +433,8 @@ class UpgradeController extends CommonController
 				if ($msg) {
 					return jsons(["status" => 400, "msg" => $msg]);
 				}
-				$percent_value = $params["resource_percent_value"] ?: "";
 				if (!empty($configoptions) && is_array($configoptions)) {
-					$re = $upgrade_logic->upgradeConfigCommon($hid, $configoptions, $currencyid, false, $promo_code, $payment, true, $percent_value);
+					$re = $upgrade_logic->upgradeConfigCommon($hid, $configoptions, $currencyid, false, $promo_code, $payment, true);
 					return jsons($re);
 				} else {
 					return jsons(["status" => 400, "msg" => "配置项非数组"]);
@@ -482,7 +481,7 @@ class UpgradeController extends CommonController
 				return jsons(["status" => 400, "msg" => lang("ID_ERROR")]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product")) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product", intval(request()->uid))) {
 				return jsons(["status" => 400, "msg" => "当前产品无法升级或降级"]);
 			}
 			$currency = $params["currencyid"] ?? "";
@@ -555,7 +554,7 @@ class UpgradeController extends CommonController
 					return jsons(["status" => 400, "msg" => lang("PLEASE_SELECT_THE_PRODUCT")]);
 				}
 				$upgrade_logic = new \app\common\logic\Upgrade();
-				if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product")) {
+				if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product", intval(request()->uid))) {
 					return jsons(["status" => 400, "msg" => "当前产品无法升级或降级"]);
 				}
 				$currency_id = isset($params["currencyid"]) && !empty($params["currencyid"]) ? intval($params["currencyid"]) : "";
@@ -570,7 +569,7 @@ class UpgradeController extends CommonController
 				$data["pid"] = $new_pid;
 				$data["billingcycle"] = $billingcycle;
 				$data["currencyid"] = $currency_id;
-				cache("upgrade_down_product_" . $hid, $data, 86400);
+				cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 				return jsons(["status" => 200, "msg" => lang("SUCCESS MESSAGE")]);
 			}
 			return jsons(["status" => 400, "msg" => lang("ERROR MESSAGE")]);
@@ -613,10 +612,10 @@ class UpgradeController extends CommonController
 				return json(["status" => 400, "msg" => "非法操作"]);
 			}
 			$upgrade_logic = new \app\common\logic\Upgrade();
-			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product")) {
+			if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product", intval(request()->uid))) {
 				return jsons(["status" => 400, "msg" => "当前产品无法升级或降级"]);
 			}
-			$data = cache("upgrade_down_product_" . $hid);
+			$data = cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid);
 			if (!$data) {
 				return jsons(["status" => 400, "msg" => "请重新选择产品"]);
 			}
@@ -647,7 +646,7 @@ class UpgradeController extends CommonController
 			if ($this->request->isPost()) {
 				$params = $this->request->param();
 				$hid = isset($params["hid"]) ? intval($params["hid"]) : "";
-				$data = cache("upgrade_down_product_" . $hid);
+				$data = cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid);
 				if (!$hid) {
 					return jsons(["status" => 400, "msg" => lang("ID_ERROR")]);
 				}
@@ -657,7 +656,7 @@ class UpgradeController extends CommonController
 					return json(["status" => 400, "msg" => "非法操作"]);
 				}
 				$upgrade_logic = new \app\common\logic\Upgrade();
-				if (!$upgrade_logic->judgeUpgradeConfigError($hid, $params["upgrade_type"] ?? "product")) {
+				if (!$upgrade_logic->judgeUpgradeConfigError($hid, $params["upgrade_type"] ?? "product", intval(request()->uid))) {
 					return jsons(["status" => 400, "msg" => "当前产品无法升级或降级"]);
 				}
 				$promo_code = $params["pormo_code"] ?? "";
@@ -676,7 +675,7 @@ class UpgradeController extends CommonController
 					return jsons(["status" => 400, "msg" => "优惠码无效"]);
 				}
 				$data["promo_code"] = $promo_code;
-				cache("upgrade_down_product_" . $hid, $data, 86400);
+				cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 				return jsons(["status" => 200, "msg" => "应用优惠码成功"]);
 			}
 			return jsons(["status" => 400, "msg" => lang("ERROR MESSAGE")]);
@@ -698,7 +697,7 @@ class UpgradeController extends CommonController
 			if ($this->request->isPost()) {
 				$params = $this->request->param();
 				$hid = isset($params["hid"]) ? intval($params["hid"]) : "";
-				$data = cache("upgrade_down_product_" . $hid);
+				$data = cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid);
 				if (!$hid) {
 					return jsons(["status" => 400, "msg" => lang("ID_ERROR")]);
 				}
@@ -708,15 +707,15 @@ class UpgradeController extends CommonController
 					return json(["status" => 400, "msg" => "非法操作"]);
 				}
 				$upgrade_logic = new \app\common\logic\Upgrade();
-				if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product")) {
+				if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product", intval(request()->uid))) {
 					return jsons(["status" => 400, "msg" => "当前产品无法升级或降级"]);
 				}
 				if (!$data) {
 					return jsons(["status" => 400, "msg" => "请重新选择产品"]);
 				}
-				\think\Db::name("host")->where("id", $hid)->update(["promoid" => 0]);
+				\think\Db::name("host")->where("id", $hid)->where("uid", intval(request()->uid))->update(["promoid" => 0]);
 				$data["promo_code"] = "";
-				cache("upgrade_down_product_" . $hid, $data, 86400);
+				cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid, $data, 86400);
 				return jsons(["status" => 200, "msg" => "移除优惠码成功"]);
 			}
 			return jsons(["status" => 400, "msg" => lang("ERROR MESSAGE")]);
@@ -753,7 +752,7 @@ class UpgradeController extends CommonController
 					return jsons(["status" => 400, "msg" => lang("ID_ERROR")]);
 				}
 				$upgrade_logic = new \app\common\logic\Upgrade();
-				if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product")) {
+				if (!$upgrade_logic->judgeUpgradeConfigError($hid, "product", intval(request()->uid))) {
 					return jsons(["status" => 400, "msg" => "当前产品无法升级或降级"]);
 				}
 				$uid = request()->uid;
@@ -762,21 +761,20 @@ class UpgradeController extends CommonController
 					return json(["status" => 400, "msg" => "非法操作"]);
 				}
 				$payment = isset($params["payment"]) && !empty($params["payment"]) ? $params["payment"] : "";
-				$data = cache("upgrade_down_product_" . $hid);
+				$data = cache("upgrade_down_product_" . intval(request()->uid) . "_" . $hid);
 				if (!$data) {
 					return jsons(["status" => 400, "msg" => "请重新选择产品"]);
 				}
-				if (cache(md5(serialize($data) . "-" . $hid . "-" . get_client_ip()))) {
+				if (cache(md5(serialize($data) . "-" . intval(request()->uid) . "-" . $hid . "-" . get_client_ip()))) {
 					return jsons(["status" => 400, "msg" => "请求过于频繁"]);
 				}
-				cache(md5(serialize($data) . "-" . $hid . "-" . get_client_ip()), "upgrade", 20);
+				cache(md5(serialize($data) . "-" . intval(request()->uid) . "-" . $hid . "-" . get_client_ip()), "upgrade", 20);
 				$newpid = $data["pid"];
 				$billingcycle = $data["billingcycle"];
 				$currencyid = $data["currencyid"];
 				$promocode = $data["promo_code"] ?? "";
 				$upgrade_logic = new \app\common\logic\Upgrade();
-				$percent_value = $params["resource_percent_value"] ?: "";
-				$result = $upgrade_logic->upgradeProductCommon($hid, $newpid, $billingcycle, $currencyid, $promocode, $payment, true, $percent_value);
+				$result = $upgrade_logic->upgradeProductCommon($hid, $newpid, $billingcycle, $currencyid, $promocode, $payment, true);
 				return jsons($result);
 			}
 			return jsons(["status" => 400, "msg" => lang("ERROR MESSAGE")]);
