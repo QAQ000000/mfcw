@@ -1231,7 +1231,7 @@ class CartController extends \cmf\controller\HomeBaseController
 				$downstream_data = input("post.");
 				$is_downstream = (strpos($downstream_data["downstream_url"], "https://") === 0 || strpos($downstream_data["downstream_url"], "http://") === 0) && strlen($downstream_data["downstream_token"]) == 32 && is_numeric($downstream_data["downstream_id"]);
 				if ($is_downstream) {
-					$downstream_create = \think\Db::name("host")->whereLike("stream_info", "%" . $downstream_data["downstream_token"] . "%")->find();
+					$downstream_create = findDownstreamHostForUser(intval(request()->uid), $downstream_data);
 					if (!empty($downstream_create)) {
 						return json(["status" => 1001, "msg" => "Successful purchase", "data" => ["hostid" => [$downstream_create["id"]]]]);
 					}

@@ -487,37 +487,7 @@ class LoginController extends \cmf\controller\HomeBaseController
 	 */
 	public function resourceLogin()
 	{
-		if ($this->request->isPost()) {
-			$validate = new \think\Validate(["username" => "require|length:4,20", "password" => "require"]);
-			$validate->message(["username.require" => "用户不能为空", "username.length" => "用户名4-20位", "password.require" => "密码不能为空"]);
-			$data = $this->request->param();
-			if (!$validate->check($data)) {
-				return jsons(["status" => 400, "msg" => "鉴权失败"]);
-			}
-			$username = trim($data["username"]);
-			$password = trim($data["password"]);
-			$result = $this->checkApiUser($username);
-			if (empty($result)) {
-				return jsons(["status" => 400, "msg" => lang("鉴权失败")]);
-			}
-			$clientsModel = new \app\home\model\ClientsModel();
-			$tmp = $clientsModel->login_get(get_client_ip(0, true));
-			if ($tmp["status"] == 400) {
-				return jsons($tmp);
-			}
-			$stored_password = (string) ($result["password"] ?? "");
-			if ($stored_password !== "" && hash_equals($stored_password, $password)) {
-				$data = ["password" => !empty($data["token"]) ? $data["token"] : $password, "lastlogin" => time(), "lastloginip" => get_client_ip(0, true)];
-				\think\Db::name("clients")->where("id", $result["id"])->update($data);
-				$userinfo["id"] = $result["id"];
-				$userinfo["username"] = $result["username"];
-				$userinfo["is_api"] = 1;
-				return jsons(["jwt" => createJwt($userinfo), "status" => 200, "msg" => "鉴权成功"]);
-			} else {
-				return jsons(["status" => 400, "msg" => "账号或密码错误"]);
-			}
-		}
-		return jsons(["status" => 400, "msg" => lang("ERROR MESSAGE")]);
+		return jsons(["status" => 404, "msg" => "无法访问"]);
 	}
 	/**
 	 * @title 产品服务列表页面

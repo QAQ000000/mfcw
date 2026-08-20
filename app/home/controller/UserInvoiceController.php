@@ -340,7 +340,7 @@ class UserInvoiceController extends CommonController
 	 */
 	public function create()
 	{
-		$uid = input("uid");
+		$uid = intval(request()->uid);
 		$size = input("size/d") ?? config("page_size");
 		$page = input("page/d") ?? config("page_num");
 		$field = input("page", "", "htmlspecialchars");
@@ -383,7 +383,7 @@ class UserInvoiceController extends CommonController
 	 */
 	public function read($id)
 	{
-		$uid = input("uid/d");
+		$uid = intval(request()->uid);
 		$where = ["i.uid" => $uid, "i.id" => $id];
 		$row = db("invoices")->alias("i")->join("clients c", "c.id=i.uid")->field("i.id,i.uid,c.username,i.create_time,i.due_time,i.payment,i.credit,i.subtotal,i.status,i.payment,c.username,c.country,c.province,c.city")->where($where)->find();
 		if (empty($row)) {

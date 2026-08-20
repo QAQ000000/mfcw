@@ -364,6 +364,9 @@ class Email
 		if (!$email) {
 			return false;
 		}
+		if (!$this->emailCodeSendAllowed($email)) {
+			return false;
+		}
 		$system_language = get_system_lang();
 		$template = \think\Db::name("email_templates")->where("language", $system_language)->where("name", "验证码")->where("disabled", 0)->find();
 		if (empty($template)) {
@@ -429,6 +432,9 @@ class Email
 		if (!$email) {
 			return false;
 		}
+		if (!$this->emailCodeSendAllowed($email)) {
+			return false;
+		}
 		$system_language = get_system_lang();
 		$template = \think\Db::name("email_templates")->where("language", $system_language)->where("name", "验证码")->where("disabled", 0)->find();
 		if (empty($template)) {
@@ -478,6 +484,15 @@ class Email
 			}
 		}
 		return $result;
+	}
+	private function emailCodeSendAllowed($email)
+	{
+		$params = ["channel" => "email", "email" => (string) $email];
+		$pluginLimit = hook_one("email_code_send_limit", $params);
+		if ($pluginLimit === false) {
+			$pluginLimit = hook_one("sms_send_limit", $params);
+		}
+		return !is_array($pluginLimit) || intval($pluginLimit["status"] ?? 200) === 200;
 	}
 	public function sendEmailBind($email, $action = "bind email", $sync = false)
 	{

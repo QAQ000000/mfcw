@@ -504,6 +504,10 @@ class OauthController extends CommonController
 				if (time() - session("registertime" . $mobile) >= 60) {
 					$params = ["code" => $code];
 					$sms = new \app\common\logic\Sms();
+					$ret = sendmsglimit($phone);
+					if ($ret["status"] == 400) {
+						return json(["status" => 400, "msg" => lang("SEND FAIL") . ":" . $ret["msg"]]);
+					}
 					$result = $sms->sendSms(8, $phone, $params);
 					session("registertime" . $mobile, time());
 					if ($result["status"] == 200) {

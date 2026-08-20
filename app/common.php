@@ -5226,6 +5226,20 @@ function get_remote_port()
 	}
 	return $port;
 }
+function findDownstreamHostForUser($uid, array $data)
+{
+	$uid = intval($uid);
+	$token = strtolower(trim((string) ($data["downstream_token"] ?? "")));
+	$downstreamId = $data["downstream_id"] ?? null;
+	$url = trim((string) ($data["downstream_url"] ?? ""));
+	if ($uid <= 0 || !preg_match("/^[a-f0-9]{32}$/", $token) || !is_numeric($downstreamId) || intval($downstreamId) <= 0 || !preg_match("#^https?://#i", $url)) {
+		return null;
+	}
+	return \think\Db::name("host")
+		->where("uid", $uid)
+		->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(IF(JSON_VALID(stream_info), stream_info, NULL), '$.downstream_token')) = ?", [$token])
+		->find();
+}
 function updateUgp($uid)
 {
 	$ngu = \think\Db::name("nav_group_user")->where("uid", $uid ?? 0)->select()->toArray();
@@ -5537,6 +5551,10 @@ function deleteLog($path, $delDir = false)
 }
 function sendmsglimit($phone)
 {
+	$pluginLimit = hook_one("sms_send_limit", ["phone" => (string) $phone]);
+	if (is_array($pluginLimit) && intval($pluginLimit["status"] ?? 200) !== 200) {
+		return $pluginLimit;
+	}
 	\think\Db::name("sendmsglimit")->where("ip", get_client_ip6())->where("time", "lt", strtotime(date("Y-m-d", time())))->delete();
 	$sendmsgtimes = 30;
 	$sendmsgphone = 5;

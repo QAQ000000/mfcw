@@ -21,6 +21,7 @@
 | [第三方登录](11-oauth.md) | OAuth 登录插件、绑定策略和回调处理 |
 | [服务器模块](12-server-modules.md) | 开通、暂停、续费、控制台及自定义按钮契约 |
 | [使用财务系统登录并回调](13-finance-login-callback.md) | 财务系统作为身份源时的现有接口、接入流程和安全边界 |
+| [安全审计暂不修复项](security-accepted-risks.md) | 已接受风险、不修原因、缓解要求和重新评估条件 |
 | [OpenAPI 路由索引](api/openapi-routes.md) | 当前 `data/route/openapi.php` 的 `/v1` 路由清单 |
 | [源码索引与覆盖矩阵](source-index.md) | 每类文档对应的权威实现与维护检查项 |
 

@@ -172,10 +172,10 @@ assertPublicApiSecurity(
 	'legacy administrator log viewing must enforce a canonical journal path and strict date format'
 );
 assertPublicApiSecurity(
-	strpos($homeLogin, 'hash_equals($stored_password, $password)') !== false
-		&& strpos($homeLogin, '$password == $result["password"]') === false
-		&& strpos($homeLogin, '!empty($data["token"]) ? $data["token"] : $password') !== false,
-	'resource supplier login must compare credentials strictly without changing its token synchronization contract'
+	strpos($homeRoutes, 'resource_login_supplier') === false
+		&& strpos($homeLogin, 'hash_equals($stored_password, $password)') === false
+		&& strpos($homeLogin, '!empty($data["token"]) ? $data["token"] : $password') === false,
+	'unused resource supplier maintenance login must not remain publicly reachable'
 );
 
 fwrite(STDOUT, "public API security regression checks passed" . PHP_EOL);

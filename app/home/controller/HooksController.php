@@ -9,6 +9,25 @@ namespace app\home\controller;
 class HooksController
 {
 	/**
+	 * @title 短信发送前限流
+	 * @url sms_send_limit
+	 * @param .name:phone type:string require:1 desc:接收短信的手机号
+	 * @return 支持返回 status 非 200 阻止发送
+	 */
+	public function sms_send_limit()
+	{
+	}
+	/**
+	 * @title 邮件验证码发送前限流
+	 * @url email_code_send_limit
+	 * @param .name:email type:string require:1 desc:接收验证码的邮箱地址
+	 * @return 支持返回 status 非 200 阻止发送
+	 */
+	public function email_code_send_limit()
+	{
+	}
+
+	/**
 	 * @title 在管理区添加工单备注
 	 * @description 接口说明:无
 	 * @author hh

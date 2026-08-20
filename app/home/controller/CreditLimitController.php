@@ -20,7 +20,7 @@ class CreditLimitController extends \cmf\controller\HomeBaseController
 	public function index()
 	{
 		$data = $this->request->param();
-		$uid = input("uid");
+		$uid = intval(request()->uid);
 		$user = \think\Db::name("clients")->alias("a")->field("username,phonenumber,email,is_open_credit_limit,credit_limit,repayment_date,bill_generation_date,bill_repayment_period,credit_limit_create_time,b.prefix,b.suffix")->leftJoin("currencies b", "a.currency = b.id")->where("a.id", $uid)->find();
 		$user["certify"] = checkCertify($uid);
 		$user["is_open_credit_limit"] = configuration("shd_credit_limit") == 1 ? configuration("credit_limit") == 1 ? $user["is_open_credit_limit"] : 0 : 0;
@@ -122,7 +122,8 @@ class CreditLimitController extends \cmf\controller\HomeBaseController
 	public function list()
 	{
 		$params = $this->request->param();
-		$uid = isset($params["uid"]) ? intval($params["uid"]) : "";
+		unset($params["uid"]);
+		$uid = intval(request()->uid);
 		if (!$uid) {
 			return jsonrule(["status" => 400, "msg" => lang("ID_ERROR")]);
 		}
@@ -218,7 +219,8 @@ class CreditLimitController extends \cmf\controller\HomeBaseController
 	public function userInvoice()
 	{
 		$params = $this->request->param();
-		$uid = isset($params["uid"]) ? intval($params["uid"]) : "";
+		unset($params["uid"]);
+		$uid = intval(request()->uid);
 		if (!$uid) {
 			return jsonrule(["status" => 400, "msg" => lang("ID_ERROR")]);
 		}

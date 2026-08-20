@@ -283,7 +283,6 @@ think\facade\Route::group("", function () {
     think\facade\Route::post("login_pass_phone", "home/login/phonePassLogin");
     think\facade\Route::post("login_pass_email", "home/login/emailLogin");
     think\facade\Route::post("zjmf_api_login", "home/login/zjmfApiLogin");
-    think\facade\Route::post("resource_login_supplier", "home/login/resourceLogin");
     think\facade\Route::any("loginAccessToken", "home/ViewClients/loginAccessToken");
     think\facade\Route::get("cart/all", "home/cart/getProducts")->middleware("Check");
     think\facade\Route::get("cart/get_product_config", "home/cart/getProductConfig")->middleware("Check");

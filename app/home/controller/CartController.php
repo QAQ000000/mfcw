@@ -2540,7 +2540,7 @@ class CartController extends CommonController
 				$downstream_data = input("post.");
 				$is_downstream = (strpos($downstream_data["downstream_url"], "https://") === 0 || strpos($downstream_data["downstream_url"], "http://") === 0) && strlen($downstream_data["downstream_token"]) == 32 && is_numeric($downstream_data["downstream_id"]);
 				if ($is_downstream) {
-					$downstream_create = \think\Db::name("host")->whereLike("stream_info", "%" . $downstream_data["downstream_token"] . "%")->find();
+					$downstream_create = findDownstreamHostForUser($uid, $downstream_data);
 					if (!empty($downstream_create)) {
 						return jsons(["status" => 1001, "msg" => lang("BUY_SUCCESS"), "data" => ["hostid" => [$downstream_create["id"]]]]);
 					}
@@ -3479,7 +3479,7 @@ class CartController extends CommonController
 		if ($request->is_api == 1) {
 			$downstream_data = input("post.");
 			$is_downstream = (strpos($downstream_data["downstream_url"], "https://") === 0 || strpos($downstream_data["downstream_url"], "http://") === 0) && strlen($downstream_data["downstream_token"]) == 32 && is_numeric($downstream_data["downstream_id"]);
-			$downstream_create = \think\Db::name("host")->whereLike("stream_info", "%" . $downstream_data["downstream_token"] . "%")->find();
+			$downstream_create = $is_downstream ? findDownstreamHostForUser(intval($request->uid), $downstream_data) : null;
 			if (!empty($downstream_create)) {
 				$orders = \think\Db::name("orders")->field("status,invoiceid")->where("id", $downstream_create["orderid"])->find();
 				if (!empty($orders["invoiceid"])) {
