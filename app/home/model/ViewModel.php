@@ -27,10 +27,15 @@ class ViewModel extends \think\Model
 		$unread_count = [];
 		$unread_count_num = 0;
 		$system_message_type = [1 => "work_order_message", 2 => "product_news", 3 => "on_site_news", 4 => "event_news"];
+		$unread_by_type = [];
+		if ($uid) {
+			$unread_rows = \think\Db::name("system_message")->field("type,COUNT(*) AS unread_num")->where("delete_time", 0)->where("read_time", 0)->whereIn("type", array_keys($system_message_type))->where("uid", $uid)->group("type")->select()->toArray();
+			$unread_by_type = array_column($unread_rows, "unread_num", "type");
+		}
 		foreach ($system_message_type as $key => $type_item) {
 			$temp_message["id"] = $key;
 			$temp_message["name"] = $type_item;
-			$temp_message["unread_num"] = \think\Db::name("system_message")->where("delete_time", 0)->where("read_time", 0)->where("type", $key)->where("uid", $uid)->count();
+			$temp_message["unread_num"] = intval($unread_by_type[$key] ?? 0);
 			$unread_count_num += $temp_message["unread_num"];
 			$unread_count[] = $temp_message;
 		}

@@ -43,10 +43,12 @@ class ViewBaseController extends CommonController
 			$uid = request()->uid;
 			$action = request()->action();
 			$controller = request()->controller();
-			$clients = \think\Db::name("clients")->field("id")->where("id", $uid)->find();
-			if (empty($clients["id"]) && $uid > 0) {
-				$uid = 0;
-				userUnsetCookie();
+			if ($uid > 0) {
+				$clients = \think\Db::name("clients")->field("id")->where("id", $uid)->find();
+				if (empty($clients["id"])) {
+					$uid = 0;
+					userUnsetCookie();
+				}
 			}
 			$nologin = ["page", "login", "logout", "register", "pwreset", "bind", "downloads", "news", "newslist", "newsview", "knowledgebase", "knowledgebaselist", "knowledgebaseview", "loginaccesstoken"];
 			if (empty($uid) && !in_array($action, $nologin) && !in_array($controller, ["View", "ViewCart"])) {
@@ -84,13 +86,15 @@ class ViewBaseController extends CommonController
 			cookie("lang", \request()->param()["language"]);
 		}
 		$uid = request()->uid;
-		$client_status = \think\Db::name("clients")->where("id", $uid)->value("status");
-		if ($uid && $client_status != 1 && !$sessionAdminId) {
-			userUnsetCookie();
-			if (request()->isAjax()) {
-				return json(["status" => 400, "msg" => "该帐号已停用/关闭，请联系管理员处理"]);
+		if ($uid) {
+			$client_status = \think\Db::name("clients")->where("id", $uid)->value("status");
+			if ($client_status != 1 && !$sessionAdminId) {
+				userUnsetCookie();
+				if (request()->isAjax()) {
+					return json(["status" => 400, "msg" => "该帐号已停用/关闭，请联系管理员处理"]);
+				}
+				$this->redirect("/login?forceLogout=1");
 			}
-			$this->redirect("/login?forceLogout=1");
 		}
 	}
 	protected function userlogout()

@@ -58,7 +58,7 @@ class Menu
 			$nav_list_ids = array_column($nav_list, "id");
 			$nav_model = \think\Db::name("nav")->field("id,url,lang")->whereIn("id", $nav_list_ids);
 			$uid = request()->uid;
-			$is_open_credit_limit = \think\Db::name("clients")->where("id", $uid)->where("status", 1)->value("is_open_credit_limit");
+			$is_open_credit_limit = $uid ? \think\Db::name("clients")->where("id", $uid)->where("status", 1)->value("is_open_credit_limit") : 0;
 			if (!$is_open_credit_limit) {
 				$nav_model->where("url", "<>", "credit");
 			}
@@ -410,6 +410,7 @@ class Menu
 	public function getDisplayNav()
 	{
 		$ids = $editotIds = [];
+		$urls = [];
 		if (empty($this->displayNav)) {
 			return $ids;
 		}
@@ -418,40 +419,45 @@ class Menu
 			if ($conf[$key] == 1) {
 				continue;
 			}
-			$id = [];
 			if (is_string($val)) {
-				$id = \think\Db::name("nav")->where("url", $val)->column("id");
+				$urls[] = $val;
 			}
 			if (isset($val["id"])) {
 				$id = is_array($val["id"]) ? $val["id"] : [$val["id"]];
+				$ids = array_merge($ids, $id);
 			}
 			if (isset($val["url"])) {
 				$url = is_array($val["url"]) ? $val["url"] : [$val["url"]];
-				$id = \think\Db::name("nav")->whereIn("url", $url)->column("id");
+				$urls = array_merge($urls, $url);
 			}
-			$ids = array_merge($ids, $id);
+		}
+		if (!empty($urls)) {
+			$ids = array_merge($ids, \think\Db::name("nav")->whereIn("url", array_values(array_unique($urls)))->column("id"));
 		}
 		return array_merge($ids, $editotIds);
 	}
 	public function getVerisonDisplayNav()
 	{
 		$ids = [];
+		$urls = [];
 		if (empty($this->verisonDisplayNav) || getEdition()) {
 			return $ids;
 		}
 		foreach ($this->verisonDisplayNav as $key => $val) {
-			$id = [];
 			if (is_string($val)) {
-				$id = \think\Db::name("nav")->where("url", $val)->column("id");
+				$urls[] = $val;
 			}
 			if (isset($val["id"])) {
 				$id = is_array($val["id"]) ? $val["id"] : [$val["id"]];
+				$ids = array_merge($ids, $id);
 			}
 			if (isset($val["url"])) {
 				$url = is_array($val["url"]) ? $val["url"] : [$val["url"]];
-				$id = \think\Db::name("nav")->whereIn("url", $url)->column("id");
+				$urls = array_merge($urls, $url);
 			}
-			$ids = array_merge($ids, $id);
+		}
+		if (!empty($urls)) {
+			$ids = array_merge($ids, \think\Db::name("nav")->whereIn("url", array_values(array_unique($urls)))->column("id"));
 		}
 		return $ids;
 	}
