@@ -144,6 +144,46 @@ class LogController extends \cmf\controller\HomeBaseController
 		$data = ["total" => $count, "log" => $res];
 		return json(["data" => $data, "status" => "200", "msg" => lang("SUCCESS MESSAGE")]);
 	}
+	private function structureApiLogDescription($description)
+	{
+		$plain = html_entity_decode((string) $description, ENT_QUOTES | ENT_HTML5, "UTF-8");
+		$plain = trim(strip_tags($plain));
+		$referenceTypes = [
+			"Invoice ID" => "invoice",
+			"User ID" => "user",
+			"Host ID" => "host",
+			"Order ID" => "order",
+			"Ticket ID" => "ticket",
+			"Transaction ID" => "transaction",
+		];
+		$parts = [];
+		$offset = 0;
+		preg_match_all('/(?:Invoice|User|Host|Order|Ticket|Transaction) ID:\d+/', $plain, $matches, PREG_OFFSET_CAPTURE);
+		foreach ($matches[0] as $match) {
+			$text = $match[0];
+			$position = $match[1];
+			if ($position > $offset) {
+				$parts[] = ["type" => "text", "text" => substr($plain, $offset, $position - $offset)];
+			}
+			preg_match('/^(.* ID):(\d+)$/', $text, $reference);
+			$parts[] = [
+				"type" => "reference",
+				"text" => $text,
+				"resource" => $referenceTypes[$reference[1]],
+				"id" => $reference[2],
+			];
+			$offset = $position + strlen($text);
+		}
+		if ($offset < strlen($plain)) {
+			$parts[] = ["type" => "text", "text" => substr($plain, $offset)];
+		} elseif (empty($parts) && $plain !== "") {
+			$parts[] = ["type" => "text", "text" => $plain];
+		}
+		return [
+			"description" => htmlspecialchars($plain, ENT_QUOTES | ENT_SUBSTITUTE, "UTF-8"),
+			"description_parts" => $parts,
+		];
+	}
 	public function apiLog()
 	{
 		$param = $this->request->param();
@@ -158,66 +198,10 @@ class LogController extends \cmf\controller\HomeBaseController
 				$query->where("a.ip|a.description|b.username|a.port", "like", "%{$keyword}%");
 			}
 		};
-		$logs = \think\Db::name("api_resource_log")->alias("a")->field("a.id,a.description,a.ip,a.port,a.create_time,b.username user")->leftJoin("clients b", "a.uid = b.id")->where($where)->withAttr("description", function ($value, $data) {
-			$pattern = "/(?P<name>\\w+ ID):(?P<digit>\\d+)/";
-			preg_match_all($pattern, $value, $matches);
-			$name = $matches["name"];
-			$digit = $matches["digit"];
-			if (!empty($name)) {
-				if (defined("VIEW_TEMPLATE_WEBSITE") && VIEW_TEMPLATE_WEBSITE) {
-					foreach ($name as $k => $v) {
-						$relid = $digit[$k];
-						$str = $v . ":" . $relid;
-						if ($v == "Invoice ID") {
-							$url = "<a class=\"el-link el-link--primary is-underline\" href=\"/billing\"><span>" . $str . "</span></a>";
-							$value = str_replace($str, $url, $value);
-						} elseif ($v == "User ID") {
-							$url = "<a class=\"el-link el-link--primary is-underline\" href=\"/details\"><span>" . $str . "</span></a>";
-							$value = str_replace($str, $url, $value);
-						} elseif ($v == "Host ID") {
-							$url = "<a class=\"el-link el-link--primary is-underline\" href=\"/servicedetail?id=" . $relid . "\"><span>" . $str . "</span></a>";
-							$value = str_replace($str, $url, $value);
-						} elseif ($v == "Order ID") {
-							$url = "<a class=\"el-link el-link--primary is-underline\" href=\"/billing\"><span>" . $str . "</span></a>";
-							$value = str_replace($str, $url, $value);
-						} elseif ($v == "Ticket ID") {
-							$url = "<a class=\"el-link el-link--primary is-underline\" href=\"/viewticket?tid=" . $relid . "\"><span>" . $str . "</span></a>";
-							$value = str_replace($str, $url, $value);
-						} elseif ($v == "Transaction ID") {
-							$url = "<a class=\"el-link el-link--primary is-underline\" href=\"/billing\"><span>" . $str . "</span></a>";
-							$value = str_replace($str, $url, $value);
-						}
-					}
-				} else {
-					foreach ($name as $k => $v) {
-						$relid = $digit[$k];
-						$str = $v . ":" . $relid;
-						if ($v == "Invoice ID") {
-							$url = "<a class=\"el-link el-link--primary is-underline\" href=\"#/finance\"><span class=\"el-link--inner\" style=\"display: block;height: 24px;line-height: 24px;\">" . $str . "</span></a>";
-							$value = str_replace($str, $url, $value);
-						} elseif ($v == "User ID") {
-							$url = "<a class=\"el-link el-link--primary is-underline\" href=\"#/personal-center\"><span class=\"el-link--inner\" style=\"display: block;height: 24px;line-height: 24px;\">" . $str . "</span></a>";
-							$value = str_replace($str, $url, $value);
-						} elseif ($v == "Host ID") {
-							$url = "<a class=\"el-link el-link--primary is-underline\" href=\"#/server/log?id=" . $relid . "\"><span class=\"el-link--inner\" style=\"display: block;height: 24px;line-height: 24px;\">" . $str . "</span></a>";
-							$value = str_replace($str, $url, $value);
-						} elseif ($v == "Order ID") {
-							$url = "<a class=\"el-link el-link--primary is-underline\" href=\"#/finance?id=" . $relid . "\"><span class=\"el-link--inner\">" . $str . "</span></a>";
-							$value = str_replace($str, $url, $value);
-						} elseif ($v == "Ticket ID") {
-							$url = "<a class=\"el-link el-link--primary is-underline\" href=\"#/tickets/viewticket?tid=" . $relid . "\"><span class=\"el-link--inner\"  style=\"display: block;height: 24px;line-height: 24px;\">" . $str . "</span></a>";
-							$value = str_replace($str, $url, $value);
-						} elseif ($v == "Transaction ID") {
-							$url = "<a class=\"el-link el-link--primary is-underline\" href=\"#/finance\"><span class=\"el-link--inner\"  style=\"display: block;height: 24px;line-height: 24px;\">" . $str . "</span></a>";
-							$value = str_replace($str, $url, $value);
-						}
-					}
-				}
-				return $value;
-			} else {
-				return $value;
-			}
-		})->order($order, $sort)->page($page)->limit($limit)->select()->toArray();
+		$logs = \think\Db::name("api_resource_log")->alias("a")->field("a.id,a.description,a.ip,a.port,a.create_time,b.username user")->leftJoin("clients b", "a.uid = b.id")->where($where)->order($order, $sort)->page($page)->limit($limit)->select()->toArray();
+		foreach ($logs as $key => $log) {
+			$logs[$key] = array_merge($log, $this->structureApiLogDescription($log["description"]));
+		}
 		$count = \think\Db::name("api_resource_log")->alias("a")->leftJoin("clients b", "a.uid = b.id")->where($where)->count();
 		$data = ["log" => $logs, "total" => $count];
 		return json(["status" => 200, "msg" => lang("SUCCESS MESSAGE"), "data" => $data]);

@@ -50,6 +50,15 @@ assertInformationDisclosureCondition(strpos($apiLog, "structureApiLogDescription
 assertInformationDisclosureCondition(strpos($apiLog, "<a ") === false, "API logs must not build anchor markup on the server");
 assertInformationDisclosureCondition(strpos($apiLog, "<span") === false, "API logs must not build span markup on the server");
 
+$openApiLog = informationDisclosureMethodSource("app/openapi/controller/LogController.php", "apiLog");
+assertInformationDisclosureCondition(strpos($openApiLog, "structureApiLogDescription") !== false, "OpenAPI logs must expose structured description parts");
+assertInformationDisclosureCondition(strpos($openApiLog, "<a ") === false, "OpenAPI logs must not build anchor markup on the server");
+assertInformationDisclosureCondition(strpos($openApiLog, "<span") === false, "OpenAPI logs must not build span markup on the server");
+
+$openApiDescriptionFormatter = informationDisclosureMethodSource("app/openapi/controller/LogController.php", "structureApiLogDescription");
+assertInformationDisclosureCondition(strpos($openApiDescriptionFormatter, '"description_parts"') !== false, "the OpenAPI log formatter must return structured parts");
+assertInformationDisclosureCondition(strpos($openApiDescriptionFormatter, "htmlspecialchars") !== false, "the legacy OpenAPI log description must remain safe for HTML-rendering clients");
+
 $descriptionFormatter = informationDisclosureMethodSource("app/home/controller/ZjmfFinanceApiController.php", "structureApiLogDescription");
 assertInformationDisclosureCondition(strpos($descriptionFormatter, '"description_parts"') !== false, "the API log formatter must return structured parts");
 assertInformationDisclosureCondition(strpos($descriptionFormatter, "htmlspecialchars") !== false, "the legacy API log description must remain safe for HTML-rendering clients");
