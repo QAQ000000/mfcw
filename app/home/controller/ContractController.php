@@ -20,6 +20,47 @@ class ContractController extends CommonController
 			exit;
 		}
 	}
+	private function escapePdfValue($value)
+	{
+		return htmlspecialchars((string) $value, ENT_QUOTES, "UTF-8");
+	}
+	private function buildContractPdfContent(array $contract, array $party, array $partyB)
+	{
+		$title = $this->escapePdfValue($contract["name"] ?? "");
+		$content = html_entity_decode((string) ($contract["content"] ?? ""), ENT_QUOTES);
+		$date = date("Y年m月d日");
+		$party = array_map([$this, "escapePdfValue"], $party);
+		$partyB = array_map([$this, "escapePdfValue"], $partyB);
+		return '<div style="text-align:center;margin-bottom:30px;"><h3>' . $title . '</h3></div>'
+			. '<table border="0" cellspacing="0" cellpadding="7" style="width:100%;">'
+			. '<tr><td style="width:50%">甲方：' . $party["institutions"] . '</td><td style="width:50%">乙方：' . $partyB["institutions"] . '</td></tr>'
+			. '<tr><td>地址：' . $party["addr"] . '</td><td>地址：' . $partyB["addr"] . '</td></tr>'
+			. '<tr><td>联系人：' . $party["username"] . '</td><td>联系人：' . $partyB["username"] . '</td></tr>'
+			. '<tr><td>联系电话：' . $party["phone"] . '</td><td>联系电话：' . $partyB["phone"] . '</td></tr>'
+			. '<tr><td>联系邮箱：' . $party["email"] . '</td><td>联系邮箱：' . $partyB["email"] . '</td></tr>'
+			. '</table><div>' . $content . '</div>'
+			. '<table border="0" cellspacing="0" cellpadding="7" style="width:100%;">'
+			. '<tr><td style="width:50%">甲方：' . $party["institutions"] . '</td><td style="width:50%">乙方：' . $partyB["institutions"] . '</td></tr>'
+			. '<tr><td>（签章）</td><td>（签章）</td></tr>'
+			. '<tr><td>时间：' . $date . '</td><td>时间：' . $date . '</td></tr>'
+			. '</table>';
+	}
+	private function buildContractEnclosure(array $host)
+	{
+		if (empty($host)) {
+			return "";
+		}
+		$amount = $this->escapePdfValue($host["amount"] ?? "");
+		$description = nl2br($this->escapePdfValue($host["description"] ?? ""));
+		$name = $this->escapePdfValue($host["name"] ?? "");
+		$orderNum = $this->escapePdfValue($host["ordernum"] ?? "");
+		$nextDueDate = !empty($host["nextduedate"]) ? date("Y-m-d", intval($host["nextduedate"])) : "";
+		return '<h5>附件</h5><div style="width:100%;font-weight:600;text-align:center;">服务清单</div>'
+			. '<div>费用总计：' . $amount . '</div><table border="1" cellspacing="0" cellpadding="7" style="width:100%;">'
+			. '<tr><th>序号</th><th>订单号</th><th>产品名称</th><th>产品详情</th><th>数量</th><th>单价</th><th>服务期限</th><th>费用</th></tr>'
+			. '<tr><td>1</td><td>' . $orderNum . '</td><td>' . $name . '</td><td>' . $description . '</td><td>1</td><td>' . $amount . '</td><td>' . $nextDueDate . '</td><td>' . $amount . '</td></tr>'
+			. '</table>';
+	}
 	/**
 	 * @title 产品列表,可签订合同产品
 	 * @description 接口说明:产品列表,可签订合同产品
@@ -133,6 +174,12 @@ class ContractController extends CommonController
 		if (empty($hid) && empty($tplid)) {
 			return jsons(["status" => 400, "msg" => lang("ID_ERROR")]);
 		}
+		if ($hid) {
+			$host_exists = \think\Db::name("host")->where("id", $hid)->where("uid", $uid)->whereIn("domainstatus", ["Active", "Suspended"])->find();
+			if (empty($host_exists)) {
+				return jsons(["status" => 400, "msg" => lang("THE_PRODUCT_WAS_NOT_FOUND")]);
+			}
+		}
 		if (!(new \app\home\model\ClientsModel())->getUserCertifi($uid)) {
 			return json(["status" => 400, "msg" => "请完善甲方信息"]);
 		}
@@ -147,7 +194,7 @@ class ContractController extends CommonController
 			return json(["status" => 400, "msg" => "合同已存在"]);
 		}
 		if (!empty($tplid)) {
-			\think\Db::name("contract_pdf")->where("contract_id", $tplid)->whereIn("status", [0, 2])->delete();
+			\think\Db::name("contract_pdf")->where("contract_id", $tplid)->where("uid", $uid)->whereIn("status", [0, 2])->delete();
 		}
 		$contrac_logic = new \app\common\logic\Contract();
 		$pdf_num = $contrac_logic->createContractNum();
@@ -190,7 +237,7 @@ class ContractController extends CommonController
 		$uid = request()->uid;
 		$param = $this->request->param();
 		$id = intval($param["id"]);
-		$contract_pdf = \think\Db::name("contract_pdf")->where("id", $id)->find();
+		$contract_pdf = \think\Db::name("contract_pdf")->where("id", $id)->where("uid", $uid)->find();
 		if (empty($contract_pdf)) {
 			return jsons(["status" => 400, "msg" => "合同不存在"]);
 		}
@@ -209,11 +256,15 @@ class ContractController extends CommonController
 		$hid = $contract_pdf["host_id"];
 		$contract_logic = new \app\common\logic\Contract();
 		if (!empty($hid)) {
+			$host = \think\Db::name("host")->alias("a")->field("b.ordernum,d.name,c.description,a.amount,a.create_time,a.nextduedate")->leftJoin("orders b", "a.orderid=b.id")->leftJoin("products d", "a.productid=d.id")->leftJoin("invoice_items c", "a.id=c.rel_id")->where("c.type", "host")->where("a.id", $hid)->where("a.uid", $uid)->find();
+			if (empty($host)) {
+				return jsons(["status" => 400, "msg" => lang("THE_PRODUCT_WAS_NOT_FOUND")]);
+			}
 			$contract["content"] = $contract_logic->replaceArg($contract["content"], $hid);
 		} else {
+			$host = [];
 			$contract["content"] = $contract_logic->replaceArg($contract["content"], $hid, 1, $uid);
 		}
-		$host = \think\Db::name("host")->alias("a")->field("b.ordernum,d.name,c.description,a.amount,a.create_time,a.nextduedate")->leftJoin("orders b", "a.orderid=b.id")->leftJoin("products d", "a.productid=d.id")->leftJoin("invoice_items c", "a.id=c.rel_id")->where("c.type", "host")->where("a.id", $hid)->find();
 		if ($contract["inscribe_custom"]) {
 			$party_b = ["institutions" => $contract["represent"], "addr" => configuration("contract_address"), "username" => configuration("contract_username"), "phone" => $contract["phonenumber"], "email" => $contract["email"]];
 		} else {
@@ -250,18 +301,19 @@ class ContractController extends CommonController
 	 */
 	public function contractSign()
 	{
+		$uid = request()->uid;
 		$param = $this->request->param();
 		$id = intval($param["id"]);
-		$count = \think\Db::name("contract_pdf")->where("id", $id)->count();
-		if ($count < 1) {
-			return jsons(["status" => 400, "msg" => "合同不存在"]);
+		$contract_pdf = \think\Db::name("contract_pdf")->where("id", $id)->where("uid", $uid)->where("status", 2)->find();
+		if (empty($contract_pdf)) {
+			return jsons(["status" => 400, "msg" => "合同不存在或非待签订状态"]);
 		}
 		$str = trim($param["sign"]);
 		$img = base64DecodeImage($str, config("contract_sign"));
 		if (!$img) {
 			return jsons(["status" => 400, "msg" => "签名失败"]);
 		}
-		\think\Db::name("contract_pdf")->where("id", $id)->update(["sign_addr" => $img]);
+		\think\Db::name("contract_pdf")->where("id", $id)->where("uid", $uid)->where("status", 2)->update(["sign_addr" => $img]);
 		$data = ["addr" => config("contract_sign_get") . $img];
 		return jsons(["status" => 200, "msg" => "签名成功", "data" => $data]);
 	}
@@ -279,13 +331,15 @@ class ContractController extends CommonController
 	public function contractPost()
 	{
 		$uid = request()->uid;
-		$client = \think\Db::name("clients")->where("id", $uid)->find();
+		$client = \think\Db::name("clients")->field("phonenumber,username,email,address1,companyname")->where("id", $uid)->find();
+		(new \app\home\model\ClientsModel())->replaceClientName($uid, $client);
 		$param = $this->request->param();
 		$id = intval($param["id"]);
-		$contract_pdf = \think\Db::name("contract_pdf")->where("id", $id)->find();
+		$contract_pdf = \think\Db::name("contract_pdf")->where("id", $id)->where("uid", $uid)->where("status", 2)->find();
 		if (empty($contract_pdf)) {
-			return jsons(["status" => 400, "msg" => "合同不存在"]);
+			return jsons(["status" => 400, "msg" => "合同不存在或非待签订状态"]);
 		}
+		$img = $contract_pdf["sign_addr"] ?: "";
 		if (!empty($param["sign"])) {
 			$str = trim($param["sign"]);
 			$img = base64DecodeImage($str, config("contract_sign"));
@@ -293,12 +347,46 @@ class ContractController extends CommonController
 				return jsons(["status" => 400, "msg" => "签名失败"]);
 			}
 		}
-		$contract = \think\Db::name("contract")->where("id", $contract_pdf["contract_id"])->find();
+		$contract = \think\Db::name("contract")->where("id", $contract_pdf["contract_id"])->where("status", 1)->find();
+		if (empty($contract)) {
+			return jsons(["status" => 400, "msg" => "合同模板不存在"]);
+		}
+		$host = [];
+		$hid = intval($contract_pdf["host_id"]);
+		$contract_logic = new \app\common\logic\Contract();
+		if ($hid > 0) {
+			$host = \think\Db::name("host")->alias("a")->field("b.ordernum,d.name,c.description,a.amount,a.create_time,a.nextduedate")->leftJoin("orders b", "a.orderid=b.id")->leftJoin("products d", "a.productid=d.id")->leftJoin("invoice_items c", "a.id=c.rel_id")->where("c.type", "host")->where("a.id", $hid)->where("a.uid", $uid)->find();
+			if (empty($host)) {
+				return jsons(["status" => 400, "msg" => lang("THE_PRODUCT_WAS_NOT_FOUND")]);
+			}
+			$contract["content"] = $contract_logic->replaceArg($contract["content"], $hid);
+		} else {
+			$contract["content"] = $contract_logic->replaceArg($contract["content"], 0, 1, $uid);
+		}
+		if ($contract["inscribe_custom"]) {
+			$party_b = ["institutions" => $contract["represent"], "addr" => configuration("contract_address"), "username" => configuration("contract_username"), "phone" => $contract["phonenumber"], "email" => $contract["email"]];
+		} else {
+			$party_b = ["institutions" => configuration("contract_institutions"), "addr" => configuration("contract_address"), "username" => configuration("contract_username"), "phone" => configuration("contract_phonenumber"), "email" => configuration("contract_email")];
+		}
+		$party = ["institutions" => $client["companyname"], "addr" => $client["address1"], "username" => $client["username"], "phone" => $client["phonenumber"], "email" => $client["email"]];
+		if (file_exists(CMF_ROOT . "app/res/common.php") && function_exists("resourceCurl")) {
+			if ($contract["id"] == 1) {
+				$supplier = \think\Db::name("supplier")->where("uid", $uid)->find();
+				$party["institutions"] = $supplier["company"];
+				$party["addr"] = $supplier["address"];
+				$party["username"] = $supplier["name"];
+			} elseif ($contract["id"] == 2) {
+				$agent = \think\Db::name("agent")->where("uid", $uid)->find();
+				$party["institutions"] = $agent["company"] ?: $party["institutions"];
+				$party["addr"] = $agent["address"];
+				$party["username"] = $agent["name"];
+			}
+		}
 		$info["user"] = $client["username"];
 		$info["title"] = $contract["name"];
 		$info["subject"] = "";
 		$info["keywords"] = "";
-		$info["content"] = html_entity_decode($param["content"]);
+		$info["content"] = $this->buildContractPdfContent($contract, $party, $party_b);
 		$info["HT"] = true;
 		$pdf_address = time() . uniqid($uid) . ".pdf";
 		$info["path"] = config("contract") . $pdf_address;
@@ -309,8 +397,12 @@ class ContractController extends CommonController
 		$locator_image = config("contract") . configuration("contract_company_logo");
 		$sign_image = config("contract_sign") . $img;
 		$cover_image = config("contract") . configuration("contract_pdf_logo");
+		$is_preview = isset($param["type"]) && $param["type"] == "I";
 		if (!is_file($locator_image)) {
 			return jsons(["status" => 400, "msg" => "系统合同印章暂未准备就绪，目前暂不支持签订！"]);
+		}
+		if (!$is_preview && (empty($img) || !is_file($sign_image))) {
+			return jsons(["status" => 400, "msg" => "请先提交签名"]);
 		}
 		$string = "浏览器:%s, 操作系统:%s, 时间:%s, IP:%s";
 		$paf_head = sprintf($string, getUserAgent(), getOS(), date("Y-m-d H:i"), get_client_ip() . (getPort() ? ":" . getPort() : ""));
@@ -337,23 +429,38 @@ class ContractController extends CommonController
 		$locator_data["x"] = $location_x - 95;
 		$locator_data["y"] = $location_y - $image_h - 5;
 		$pdf_logic->createSeal($locator_image, $image_w, $image_h, $locator_data);
-		$image_user_w_h = 30;
-		$locator_data["p"] = $location_page;
-		$locator_data["x"] = $image_user_w_h;
-		$locator_data["y"] = $location_y - $image_user_w_h - 5;
-		$pdf_logic->createSeal($sign_image, $image_user_w_h * 2, $image_user_w_h, $locator_data);
-		if (empty($contract["base"])) {
+		if (!empty($img) && is_file($sign_image)) {
+			$image_user_w_h = 30;
+			$locator_data["p"] = $location_page;
+			$locator_data["x"] = $image_user_w_h;
+			$locator_data["y"] = $location_y - $image_user_w_h - 5;
+			$pdf_logic->createSeal($sign_image, $image_user_w_h * 2, $image_user_w_h, $locator_data);
+		}
+		if (empty($contract["base"]) && !empty($host)) {
 			$pdfObj->AddPage();
-			$pdfObj->writeHTML(html_entity_decode($param["enclosure"]), true, false, true, false);
+			$pdfObj->writeHTML($this->buildContractEnclosure($host), true, false, true, false);
 		}
 		$pdfObj->Output($info["path"], "F");
-		unlink(config("contract_sign") . $contract_pdf["sign_addr"]);
-		unlink(config("contract") . $contract_pdf["pdf_address"]);
-		if ($param["type"] == "I") {
-			\think\Db::name("contract_pdf")->where("id", $id)->update(["pdf_address" => $pdf_address]);
+		if ($is_preview) {
+			$up = \think\Db::name("contract_pdf")->where("id", $id)->where("uid", $uid)->where("status", 2)->update(["pdf_address" => $pdf_address]);
 		} else {
-			$up = \think\Db::name("contract_pdf")->where("id", $id)->update(["sign_addr" => $img ?: "", "pdf_address" => $pdf_address, "status" => 1]);
-			if ($up) {
+			$up = \think\Db::name("contract_pdf")->where("id", $id)->where("uid", $uid)->where("status", 2)->update(["sign_addr" => $img ?: "", "pdf_address" => $pdf_address, "status" => 1]);
+		}
+		if (!$up) {
+			if (is_file($info["path"])) {
+				unlink($info["path"]);
+			}
+			return jsons(["status" => 400, "msg" => "合同状态已变更，请刷新后重试"]);
+		}
+		$old_sign_path = config("contract_sign") . $contract_pdf["sign_addr"];
+		if (!empty($contract_pdf["sign_addr"]) && $contract_pdf["sign_addr"] !== $img && is_file($old_sign_path)) {
+			unlink($old_sign_path);
+		}
+		$old_pdf_path = config("contract") . $contract_pdf["pdf_address"];
+		if (!empty($contract_pdf["pdf_address"]) && $contract_pdf["pdf_address"] !== $pdf_address && is_file($old_pdf_path)) {
+			unlink($old_pdf_path);
+		}
+		if (!$is_preview) {
 				hook("after_sign_contract", ["id" => $id]);
 				$send = 0;
 				$type = "contract";
@@ -385,7 +492,6 @@ class ContractController extends CommonController
 						}
 					}
 				}
-			}
 		}
 		return json(["status" => 200, "msg" => "签订成功"]);
 	}
@@ -432,9 +538,7 @@ class ContractController extends CommonController
 			if (isset($param["status"]) && \strval($param["status"]) !== "") {
 				$query->where("a.status", $param["status"]);
 			}
-			if (!empty($param["uid"])) {
-				$query->where("a.uid", $param["uid"]);
-			}
+			$query->where("a.uid", request()->uid);
 		};
 		$total = \think\Db::name("contract_pdf")->alias("a")->leftJoin("host b", "a.host_id=b.id")->leftJoin("products c", "b.productid=c.id")->leftJoin("contract d", "a.contract_id=d.id")->leftJoin("orders e", "b.orderid=e.id")->where($where)->count();
 		$lists = \think\Db::name("contract_pdf")->alias("a")->field("a.id,a.pdf_num,c.name,b.domain,b.dedicatedip,b.amount,e.create_time,b.nextduedate,b.domainstatus,d.force,
@@ -542,10 +646,10 @@ class ContractController extends CommonController
 			}
 		}
 		if ($amount <= 0) {
-			\think\Db::name("contract_pdf")->where("id", $id)->update(["status" => 3]);
+			\think\Db::name("contract_pdf")->where("id", $id)->where("uid", $uid)->whereIn("status", [1, 2])->update(["status" => 3]);
 		}
 		if (!empty($param["voucher_id"])) {
-			\think\Db::name("voucher_post")->where("id", intval($param["voucher_id"]))->update(["username" => trim($param["username"]), "phone" => trim($param["phone"]), "detail" => trim($param["detail"])]);
+			\think\Db::name("voucher_post")->where("id", intval($param["voucher_id"]))->where("uid", $uid)->update(["username" => trim($param["username"]), "phone" => trim($param["phone"]), "detail" => trim($param["detail"])]);
 		} else {
 			\think\Db::name("voucher_post")->insertGetId(["uid" => $uid, "username" => trim($param["username"]), "phone" => trim($param["phone"]), "detail" => trim($param["detail"]), "default" => 1]);
 		}
@@ -601,7 +705,7 @@ class ContractController extends CommonController
 		if ($contract_pdf["status"] != 2) {
 			return jsons(["status" => 400, "msg" => "非待签订合同不可作废"]);
 		}
-		\think\Db::name("contract_pdf")->where("id", $id)->update(["status" => 0]);
+		\think\Db::name("contract_pdf")->where("id", $id)->where("uid", $uid)->where("status", 2)->update(["status" => 0]);
 		return jsons(["status" => 200, "msg" => lang("SUCCESS MESSAGE")]);
 	}
 	/**

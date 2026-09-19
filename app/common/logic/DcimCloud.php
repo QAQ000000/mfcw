@@ -16,6 +16,71 @@ class DcimCloud
 	private $dir = CMF_ROOT . "public/vendor/dcimcloud";
 	public $user_prefix = "";
 	public $log_prefix_error = "魔方云模块错误:";
+	private static $supplierDiagnosticSeen = [];
+	private $lastHttpCode = 0;
+	private function sanitizeSupplierDiagnostic($value, $key = "", $depth = 0)
+	{
+		if ($key !== "" && preg_match('/(?:pass(?:word)?|pwd|secret|token|api[_-]?key|accesshash|authorization|cookie|credential|crackpwd)/i', $key)) {
+			return "[redacted]";
+		}
+		if ($depth >= 6) {
+			return "[truncated]";
+		}
+		if (is_array($value)) {
+			$result = [];
+			$count = 0;
+			foreach ($value as $itemKey => $itemValue) {
+				if (++$count > 100) {
+					$result["__truncated__"] = true;
+					break;
+				}
+				$result[$itemKey] = $this->sanitizeSupplierDiagnostic($itemValue, (string) $itemKey, $depth + 1);
+			}
+			return $result;
+		}
+		if (is_object($value)) {
+			return $this->sanitizeSupplierDiagnostic((array) $value, $key, $depth + 1);
+		}
+		if (!is_string($value)) {
+			return $value;
+		}
+		$value = preg_replace('#(https?://)[^/@\\s]+@#i', '$1[redacted]@', $value);
+		return preg_replace('/((?:pass(?:word)?|pwd|secret|token|api[_-]?key|accesshash|authorization|cookie|credential|crackpwd)"?\\s*[:=]\\s*"?)[^"\\s,;&}]+/i', '$1[redacted]', $value);
+	}
+	private function recordSupplierDiagnostic($response, $action)
+	{
+		$safeResponse = $this->sanitizeSupplierDiagnostic($response);
+		$responseJson = json_encode($safeResponse, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+		if ($responseJson === false || $responseJson === "") {
+			$responseJson = "无法编码供应商响应";
+		}
+		if (strlen($responseJson) > 4096) {
+			$responseJson = (function_exists("mb_strcut") ? mb_strcut($responseJson, 0, 4096, "UTF-8") : substr($responseJson, 0, 4096)) . "...[truncated]";
+		}
+		$key = sha1(intval($this->serverid) . "|" . $action . "|" . $responseJson);
+		if (isset(self::$supplierDiagnosticSeen[$key])) {
+			return;
+		}
+		self::$supplierDiagnosticSeen[$key] = true;
+		$context = json_encode([
+			"server_id" => intval($this->serverid),
+			"action" => (string) $action,
+			"response" => $responseJson,
+		], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+		try {
+			\think\facade\Log::record("DcimCloud supplier request failed: " . $context, "error");
+		} catch (\Throwable $e) {
+			error_log("Failed to record DcimCloud supplier diagnostic: " . $e->getMessage());
+		}
+	}
+	public function supplierFailureForClient($response, $action)
+	{
+		$this->recordSupplierDiagnostic($response, $action);
+		if ($this->is_admin) {
+			return is_array($response) ? $response : ["status" => "error", "msg" => (string) $response];
+		}
+		return ["status" => "error", "msg" => "操作失败，请稍后重试或联系管理员"];
+	}
 	public function __construct($serverid = 0)
 	{
 		$this->setUrl($serverid);
@@ -2015,7 +2080,7 @@ class DcimCloud
 			return $result;
 		}
 		$res = $this->curl("/clouds/" . $product["dcimid"], [], 30, "DELETE");
-		if ($res["status"] == "success" || $res["http_code"] == 404) {
+		if ($res["status"] == "success" || $this->lastHttpCode == 404) {
 			$this->savePanelPass($id, $product["productid"], "");
 			$result["status"] = 200;
 			$result["msg"] = "删除成功";
@@ -2975,7 +3040,7 @@ class DcimCloud
 			$res_data["status"] = 200;
 			$res_data["msg"] = "流量重置成功";
 		} else {
-			if ($res["http_code"] == 404) {
+			if ($this->lastHttpCode == 404) {
 				$this->curl("/clouds/" . $dcimid, ["tmp_traffic" => 0], 2, "PUT");
 				$description = sprintf("流量清零成功 - Host ID:%d", $hostid);
 				$res_data["status"] = 200;
@@ -3060,19 +3125,25 @@ class DcimCloud
 	}
 	public function curl($action = "", $data = [], $timeout = 30, $request = "POST", $relogin = true)
 	{
+		$this->lastHttpCode = 0;
 		$access_token = $this->login();
 		if (!$access_token) {
-			return ["status" => "error", "msg" => $this->link_error_msg];
+			return $this->supplierFailureForClient(["status" => "error", "msg" => $this->link_error_msg], $action);
 		}
 		$header = ["access-token: " . $access_token];
 		$res = $this->basecurl($action, $data, $timeout, $request, $header);
-		if ($relogin && $res["status"] == "error" && $res["http_code"] == 401) {
+		$this->lastHttpCode = isset($res["http_code"]) ? intval($res["http_code"]) : 0;
+		if ($relogin && isset($res["status"]) && $res["status"] == "error" && $this->lastHttpCode == 401) {
 			$access_token = $this->login(true);
 			if (!$access_token) {
-				return ["status" => "error", "msg" => $this->link_error_msg];
+				return $this->supplierFailureForClient(["status" => "error", "msg" => $this->link_error_msg], $action);
 			}
 			$header = ["access-token: " . $access_token];
 			$res = $this->basecurl($action, $data, $timeout, $request, $header);
+			$this->lastHttpCode = isset($res["http_code"]) ? intval($res["http_code"]) : 0;
+		}
+		if (!isset($res["status"]) || $res["status"] !== "success") {
+			return $this->supplierFailureForClient($res, $action);
 		}
 		return $res;
 	}

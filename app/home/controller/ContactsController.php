@@ -133,8 +133,12 @@ class ContactsController extends CommonController
 				if (!empty($client_exists)) {
 					return json(["status" => 400, "msg" => lang("CONTACTS_EMAIL_IS_EXISTS")]);
 				}
+				$contact_exists = \think\Db::name("contacts")->where("id", $cid)->where("uid", $uid)->find();
+				if (empty($contact_exists)) {
+					return json(["status" => 400, "msg" => lang("CONTACTS_SON_USER_NOT_FOUND")]);
+				}
 				$udata["update_time"] = time();
-				\think\Db::name("contacts")->where("id", $cid)->update($udata);
+				\think\Db::name("contacts")->where("id", $cid)->where("uid", $uid)->update($udata);
 			} else {
 				$contact_exists = \think\Db::name("contacts")->where("email", $param["email"])->find();
 				$client_exists = \think\Db::name("clients")->where("email", $param["email"])->find();

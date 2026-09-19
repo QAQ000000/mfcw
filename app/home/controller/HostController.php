@@ -61,28 +61,12 @@ class HostController extends CommonController
 	 * @list  price_desc:展示价格
 	 * @list  os:操作系统
 	 * @list  svg:操作系统图标
-	 * @list  area_code:区域代码
-	 * @list  area_name:区域名称
 	 * @return page:当前页数
 	 * @return limit:每页条数
 	 * @return sum:总条数
 	 * @return max_page:总页数
 	 * @return orderby:排序字段
 	 * @return sort:排序方向
-	 * @return auth.traffic:流量图(on开启off关闭)
-	 * @return auth.kvm:kvm(on开启off关闭)
-	 * @return auth.ikvm:ikvm(on开启off关闭)
-	 * @return auth.bmc:重置bmc(on开启off关闭)
-	 * @return auth.reinstall:重装系统(on开启off关闭)
-	 * @return auth.reboot:重启(on开启off关闭)
-	 * @return auth.on:开机(on开启off关闭)
-	 * @return auth.off:关机(on开启off关闭)
-	 * @return auth.novnc:novnc(on开启off关闭)
-	 * @return auth.rescue:救援系统(on开启off关闭)
-	 * @return auth.crack_pass:重置密码(on开启off关闭)
-	 * @return area:区域信息@
-	 * @area  code:区域代码
-	 * @area  name:区域名称
 	 * @return domainstatus:产品状态
 	 */
 	public function getList(\think\Request $request)
@@ -144,7 +128,7 @@ class HostController extends CommonController
 		if (!empty($where_search_area)) {
 			$count = \think\Db::name("host")->alias("h")->leftJoin("products p", "p.id=h.productid")->where($where)->where($where_search_area)->count();
 			$max_page = ceil($count / $page);
-			$data = \think\Db::name("host")->field("h.orderid,p.api_type,p.zjmf_api_id")->field("h.id,h.domain,h.initiative_renew,h.domainstatus,h.regdate,h.dedicatedip,h.assignedips,h.nextduedate,h.remark  notes,h.nextinvoicedate,h.firstpaymentamount,h.amount,h.billingcycle,h.os,h.os_url,h.dcimid,h.dcim_os,h.dcim_area,b.os server_os,p.name as productname,b.area,b.auth,p.type as product_type,p.id as pid,p.pay_type")->alias("h")->leftJoin("products p", "p.id=h.productid")->leftJoin("dcim_servers b", "h.serverid=b.serverid")->where($where)->where($where_search_area)->withAttr("assignedips", function ($value) {
+			$data = \think\Db::name("host")->field("h.orderid,p.api_type,p.zjmf_api_id")->field("h.id,h.domain,h.initiative_renew,h.domainstatus,h.regdate,h.dedicatedip,h.assignedips,h.nextduedate,h.remark  notes,h.nextinvoicedate,h.firstpaymentamount,h.amount,h.billingcycle,h.os,h.os_url,h.dcimid,h.dcim_os,b.os server_os,p.name as productname,p.type as product_type,p.id as pid,p.pay_type")->alias("h")->leftJoin("products p", "p.id=h.productid")->leftJoin("dcim_servers b", "h.serverid=b.serverid")->where($where)->where($where_search_area)->withAttr("assignedips", function ($value) {
 				if (!empty($value)) {
 					return explode(",", $value);
 				} else {
@@ -156,7 +140,7 @@ class HostController extends CommonController
 		} else {
 			$count = \think\Db::name("host")->alias("h")->leftJoin("products p", "p.id=h.productid")->where($where)->count();
 			$max_page = ceil($count / $page);
-			$data = \think\Db::name("host")->field("h.orderid,p.api_type,p.zjmf_api_id")->field("h.id,h.domain,h.initiative_renew,h.domainstatus,h.regdate,h.dedicatedip,h.assignedips,h.nextduedate,h.remark  notes,h.nextinvoicedate,h.firstpaymentamount,h.amount,h.billingcycle,h.os,h.os_url,h.dcimid,h.dcim_os,h.dcim_area,b.os server_os,p.name as productname,b.area,b.auth,p.type as product_type,p.id as pid,p.pay_type")->alias("h")->leftJoin("products p", "p.id=h.productid")->leftJoin("dcim_servers b", "h.serverid=b.serverid")->where($where)->withAttr("assignedips", function ($value) {
+			$data = \think\Db::name("host")->field("h.orderid,p.api_type,p.zjmf_api_id")->field("h.id,h.domain,h.initiative_renew,h.domainstatus,h.regdate,h.dedicatedip,h.assignedips,h.nextduedate,h.remark  notes,h.nextinvoicedate,h.firstpaymentamount,h.amount,h.billingcycle,h.os,h.os_url,h.dcimid,h.dcim_os,b.os server_os,p.name as productname,p.type as product_type,p.id as pid,p.pay_type")->alias("h")->leftJoin("products p", "p.id=h.productid")->leftJoin("dcim_servers b", "h.serverid=b.serverid")->where($where)->withAttr("assignedips", function ($value) {
 				if (!empty($value)) {
 					return explode(",", $value);
 				} else {
@@ -222,25 +206,9 @@ class HostController extends CommonController
 			} else {
 				$data[$key]["price_desc"] = $currency["prefix"] . $val["amount"] . $currency["suffix"];
 			}
-			$data[$key]["auth"] = json_decode($val["auth"], true) ?: [];
 			$data[$key]["notes"] = html_entity_decode($val["notes"]);
 			unset($data[$key]["dcim_os"]);
 			unset($data[$key]["server_os"]);
-			if (!empty($val["dcim_area"])) {
-				$area = json_decode($val["area"], true);
-				foreach ($area as $k => $v) {
-					if ($v["id"] == $val["dcim_area"]) {
-						$data[$key]["area_code"] = $v["area"];
-						$data[$key]["area_name"] = $v["name"] ?? "";
-						break;
-					}
-				}
-			} else {
-				$data[$key]["area_code"] = "";
-				$data[$key]["area_name"] = "";
-			}
-			unset($data[$key]["area"]);
-			unset($data[$key]["dcim_area"]);
 		}
 		foreach ($data as $key => $val) {
 			$all_options = \think\Db::name("host_config_options")->where("relid", $val["id"])->select()->toArray();
@@ -282,11 +250,6 @@ class HostController extends CommonController
 		$result["data"]["orderby"] = $orderby;
 		$result["data"]["sort"] = $sort;
 		$result["data"]["list"] = $data;
-		if ($type == "dcim") {
-			$result["data"]["area"] = get_all_dcim_area();
-		} else {
-			$result["data"]["area"] = [];
-		}
 		$domainstatus = config("public.domainstatus");
 		$result["data"]["domainstatus"] = $domainstatus;
 		return jsons($result);

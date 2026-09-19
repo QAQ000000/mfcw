@@ -17,6 +17,18 @@ class SupplierResponseTestClientActivityLog
 
 class_alias("SupplierResponseTestClientActivityLog", "app\\common\\logic\\ClientActivityLog");
 
+class SupplierResponseTestThinkLog
+{
+	public static $records = [];
+
+	public static function record($message, $level = "log")
+	{
+		self::$records[] = [$message, $level];
+	}
+}
+
+class_alias("SupplierResponseTestThinkLog", "think\\facade\\Log");
+
 $supplierResponseTestLogs = [];
 function active_log_final($description, $userid = 0, $type = 0, $typeDataId = 0)
 {
@@ -26,7 +38,24 @@ function active_log_final($description, $userid = 0, $type = 0, $typeDataId = 0)
 }
 
 require dirname(__DIR__) . "/app/common/logic/Dcim.php";
+require dirname(__DIR__) . "/app/common/logic/DcimCloud.php";
 require dirname(__DIR__) . "/app/common/logic/Host.php";
+
+class SupplierResponseTestDcimCloud extends \app\common\logic\DcimCloud
+{
+	public $loginQueue = [];
+	public $responseQueue = [];
+
+	public function login($force = false)
+	{
+		return array_shift($this->loginQueue);
+	}
+
+	public function basecurl($action = "", $data = [], $timeout = 30, $request = "POST", $header = [])
+	{
+		return array_shift($this->responseQueue);
+	}
+}
 
 function assertSupplierCondition($condition, $message)
 {
@@ -73,6 +102,59 @@ $adminFailure = $logic->supplierFailureForClient($rawFailure, 17, 29, "后台测
 assertSupplierCondition(strpos($adminFailure["msg"], "CURL ERROR:") !== false, "administrators must retain the supplier diagnostic message");
 assertSupplierCondition(isset($adminFailure["http_code"], $adminFailure["content"], $adminFailure["data"]), "administrators must retain the original diagnostic fields");
 $logic->is_admin = false;
+
+$cloudLogic = new \app\common\logic\DcimCloud();
+$cloudLogic->serverid = 41;
+$cloudFailure = [
+	"status" => "error",
+	"msg" => "request https://admin:raw-password@supplier.invalid failed; token=raw-token",
+	"http_code" => 500,
+	"data" => ["secret" => "raw-secret", "api_key" => "raw-api-key"],
+];
+$cloudClientFailure = $cloudLogic->supplierFailureForClient($cloudFailure, "/clouds/9");
+assertSupplierCondition(
+	$cloudClientFailure === ["status" => "error", "msg" => "操作失败，请稍后重试或联系管理员"],
+	"DCIM Cloud customer failures must use the fixed local response"
+);
+assertSupplierCondition(count(SupplierResponseTestThinkLog::$records) === 1, "DCIM Cloud failures must be written to the internal runtime log");
+$cloudLog = SupplierResponseTestThinkLog::$records[0][0];
+assertSupplierCondition(strpos($cloudLog, '"server_id":41') !== false, "DCIM Cloud diagnostics must identify the local server record");
+assertSupplierCondition(strpos($cloudLog, '"action":"/clouds/9"') !== false, "DCIM Cloud diagnostics must identify the failed action");
+foreach (["raw-password", "raw-token", "raw-secret", "raw-api-key"] as $sensitiveValue) {
+	assertSupplierCondition(strpos($cloudLog, $sensitiveValue) === false, "DCIM Cloud diagnostics must redact " . $sensitiveValue);
+}
+$cloudLogic->supplierFailureForClient($cloudFailure, "/clouds/9");
+assertSupplierCondition(count(SupplierResponseTestThinkLog::$records) === 1, "identical DCIM Cloud failures must be logged once per request");
+$cloudLogic->is_admin = true;
+assertSupplierCondition(
+	$cloudLogic->supplierFailureForClient($cloudFailure, "/clouds/10") === $cloudFailure,
+	"DCIM Cloud administrators must retain the original diagnostic response"
+);
+$cloudLogic->is_admin = false;
+
+$cloudCurlSource = supplierMethodSource("app/common/logic/DcimCloud.php", "curl");
+assertSupplierCondition(substr_count($cloudCurlSource, "supplierFailureForClient") >= 3, "every final DCIM Cloud transport failure must use the client-safe contract");
+assertSupplierCondition(strpos($cloudCurlSource, '$this->lastHttpCode') !== false, "DCIM Cloud HTTP status handling must remain internal");
+
+$transportCloud = new SupplierResponseTestDcimCloud();
+$transportCloud->serverid = 42;
+$transportCloud->loginQueue = ["access-token"];
+$transportCloud->responseQueue = [["status" => "error", "msg" => "upstream stack", "http_code" => 500, "data" => ["debug" => "private"]]];
+assertSupplierCondition(
+	$transportCloud->curl("/clouds/11") === ["status" => "error", "msg" => "操作失败，请稍后重试或联系管理员"],
+	"DCIM Cloud curl must hide final supplier failures from customers"
+);
+$logCountBeforeRetry = count(SupplierResponseTestThinkLog::$records);
+$transportCloud->loginQueue = ["expired-token", "renewed-token"];
+$transportCloud->responseQueue = [
+	["status" => "error", "msg" => "expired", "http_code" => 401],
+	["status" => "success", "data" => ["id" => 11]],
+];
+assertSupplierCondition(
+	$transportCloud->curl("/clouds/11", [], 30, "GET") === ["status" => "success", "data" => ["id" => 11]],
+	"DCIM Cloud curl must retain a successful response after reauthentication"
+);
+assertSupplierCondition(count(SupplierResponseTestThinkLog::$records) === $logCountBeforeRetry, "a recovered 401 must not be recorded as a supplier failure");
 
 $safeSuccess = $logic->supplierSuccessForClient(
 	[
