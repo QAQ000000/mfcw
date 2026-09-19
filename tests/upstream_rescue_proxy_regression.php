@@ -26,6 +26,10 @@ assertUpstreamRescueProxy(
 	"the legacy method-name spelling must not be forwarded to upstream finance systems"
 );
 assertUpstreamRescueProxy(
+	substr_count($rescueMethod, '$post_data["temp_pass"] = input("post.temp_pass", "");') === 2,
+	"both zjmf_api and resource rescue requests must forward the generated temporary password"
+);
+assertUpstreamRescueProxy(
 	strpos($homeProvision, 'case "rescue_system":') !== false,
 	"the customer receiver must accept the rescue proxy protocol name"
 );

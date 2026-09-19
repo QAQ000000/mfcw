@@ -2067,6 +2067,7 @@ class Host
 			$post_data["id"] = $host["dcimid"];
 			$post_data["func"] = "rescue_system";
 			$post_data["system"] = $system;
+			$post_data["temp_pass"] = input("post.temp_pass", "");
 			$post_data["is_api"] = 1;
 			$module_res = zjmfCurl($host["zjmf_api_id"], "/provision/default", $post_data);
 		} elseif ($host["api_type"] == "resource") {
@@ -2075,6 +2076,7 @@ class Host
 				$post_data["func"] = "rescue_system";
 				$post_data["is_api"] = 1;
 				$post_data["system"] = $system;
+				$post_data["temp_pass"] = input("post.temp_pass", "");
 				$module_res = resourceCurl($host["productid"], "/provision/default", $post_data);
 			}
 		} else {
