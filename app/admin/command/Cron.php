@@ -88,6 +88,7 @@ class Cron extends \think\console\Command
 		}
 		hook("before_daily_cron");
 		updateConfiguration("last_dailycron_invocation_time", time());
+		$this->productExpirationReminder();
 		$this->invoice($config);
 		$this->ticket($config);
 		$this->dcimFlowCls();
@@ -149,6 +150,33 @@ class Cron extends \think\console\Command
 	}
 	public function currencyRatesUpdate($config)
 	{
+	}
+	private function productExpirationReminder()
+	{
+		$today_start = strtotime(date("Y-m-d"));
+		$reminder_start = $today_start + 86400;
+		$reminder_end = $today_start + 8 * 86400 - 1;
+		$hosts = \think\Db::name("host")->alias("a")->field("a.id,a.uid,p.name,a.domain,a.nextduedate,a.dedicatedip")->join("products p", "p.id=a.productid")->whereIn("a.domainstatus", "Active,Suspended")->where("a.nextduedate", ">", time())->where("a.nextduedate", ">=", $reminder_start)->where("a.nextduedate", "<=", $reminder_end)->where("a.billingcycle", "<>", "free")->where("a.billingcycle", "<>", "onetime")->where("a.billingcycle", "<>", "ontrial")->select()->toArray();
+		$message_template_type = array_column(config("message_template_type"), "id", "name");
+		foreach ($hosts as $host) {
+			if (cancelRequest($host["id"])) {
+				continue;
+			}
+			$email = new \app\common\logic\Email();
+			$result = $email->sendEmailBase($host["id"], "产品到期续费提示(第一次)", "invoice", true);
+			$sms = new \app\common\logic\Sms();
+			$template_id = $message_template_type[strtolower("renew_product_reminder")];
+			$client = check_type_is_use($template_id, $host["uid"], $sms);
+			if ($client) {
+				$params = ["product_name" => $host["name"], "hostname" => $host["domain"], "product_end_time" => date("Y-m-d H:i:s", $host["nextduedate"]), "product_mainip" => $host["dedicatedip"]];
+				$sms->sendSms($template_id, $client["phone_code"] . $client["phonenumber"], $params, false, $host["uid"]);
+			}
+			if ($result) {
+				active_log_final("产品到期提醒 - User ID:" . $host["uid"] . "产品#Host ID:" . $host["id"] . "发送邮件成功", $host["uid"], 5);
+			} else {
+				active_log_final("产品到期提醒 - User ID:" . $host["uid"] . "产品#Host ID:" . $host["id"] . "发送邮件失败", $host["uid"], 5);
+			}
+		}
 	}
 	public function cancellations()
 	{

@@ -94,16 +94,6 @@ class Invoices
 		if ($result["status"] == 200) {
 			$description .= "成功";
 			hook("renew_invoice_create", ["invoiceid" => $r1, "hostid" => $hostid]);
-			$email = new Email();
-			$email->sendEmailBase($hostid, "产品到期续费提示(第一次)", "invoice", true);
-			$message_template_type = array_column(config("message_template_type"), "id", "name");
-			$sms = new Sms();
-			$client = check_type_is_use($message_template_type[strtolower("renew_product_reminder")], $host["uid"], $sms);
-			if ($client) {
-				$product = \think\Db::name("products")->field("name")->where("id", $host["productid"])->find();
-				$params = ["product_name" => $product["name"], "hostname" => $host["domain"], "product_end_time" => date("Y-m-d H:i:s", $host["nextduedate"]), "product_mainip" => $host["dedicatedip"]];
-				$sms->sendSms($message_template_type[strtolower("renew_product_reminder")], $client["phone_code"] . $client["phonenumber"], $params, false, $host["uid"]);
-			}
 			if (!empty($pay)) {
 				$result1 = $this->useCreditPay($r1);
 				$description .= " -产品Host ID:{$hostid} 自动续费已开启";
