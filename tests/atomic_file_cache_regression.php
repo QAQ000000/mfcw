@@ -60,6 +60,23 @@ try {
 	assertTrue(mkdir($cacheDirectory, 0777, true), "test cache directory must be created");
 	assertTrue(chmod($cacheDirectory, 0777), "test cache directory must begin world-writable");
 	$cache = new InspectableAtomicFile(["path" => $cacheDirectory, "cache_subdir" => false]);
+	// Header/body separation must preserve the parent driver's on-disk format.
+	foreach ([false, true] as $compress) {
+		$options = ["path" => $cacheDirectory, "cache_subdir" => false, "data_compress" => $compress];
+		$atomic = new \app\common\cache\AtomicFile($options);
+		$legacy = new \think\cache\driver\File($options);
+		foreach (["", "0", false, true, 42, 1.25, null, ["商品" => [1, "two", false]]] as $index => $value) {
+			$compatibilityKey = "format-" . (int) $compress . "-" . $index;
+			$compatibilityFile = $cacheDirectory . DIRECTORY_SEPARATOR . md5($compatibilityKey) . ".php";
+			assertTrue($legacy->set($compatibilityKey, $value, 900), "legacy cache write must succeed");
+			$expected = file_get_contents($compatibilityFile);
+			$decoded = $legacy->get($compatibilityKey);
+			assertTrue($atomic->get($compatibilityKey) === $decoded, "atomic reader must accept existing cache files");
+			assertTrue($atomic->set($compatibilityKey, $value, 900), "atomic compatibility write must succeed");
+			assertTrue(file_get_contents($compatibilityFile) === $expected, "header, TTL and payload bytes must remain identical");
+			assertTrue($legacy->get($compatibilityKey) === $decoded, "legacy reader must accept new cache files");
+		}
+	}
 	$key = "large-catalog";
 	$filename = $cacheDirectory . DIRECTORY_SEPARATOR . md5($key) . ".php";
 	$firstValue = str_repeat("catalog-A-", 220000);

@@ -337,6 +337,8 @@ class Cart
 			self::$defaultConfigSnapshots[$request_key] = $snapshot;
 			return $snapshot;
 		}
+		// Release the obsolete decoded snapshot before fetching replacement data.
+		unset($snapshot);
 		$rows = \think\Db::name("product_config_options")->alias("a")
 			->field("c.pid as product_id,a.id as cid,a.option_type,a.qty_minimum as option_qty_minimum,a.is_discount,a.option_name,a.is_rebate,a.linkage_pid,a.linkage_top_pid,b.id as sub_id,b.hidden as sub_hidden,b.qty_minimum,b.qty_maximum,b.sort_order as sub_sort_order,p.*")
 			->join("product_config_links c", "c.gid=a.gid")
@@ -346,7 +348,7 @@ class Cart
 			->order("a.id", "asc")
 			->order("b.sort_order", "asc")
 			->order("p.relid", "asc")
-			->select()->toArray();
+			->cursor();
 		$snapshot = ["version" => $version, "options_by_product" => [], "pricing_by_option" => [], "default_pricing_by_option" => []];
 		$seen_pricing = [];
 		foreach ($rows as $row) {
@@ -376,6 +378,8 @@ class Cart
 				$seen_pricing[$cid][$sub_id] = true;
 			}
 		}
+		// Drop the cursor and build-only data before allocating the JSON payload.
+		unset($rows, $row, $pricing, $seen_pricing);
 		foreach ($snapshot["options_by_product"] as &$product_options) {
 			$product_options = array_values($product_options);
 		}

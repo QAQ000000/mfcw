@@ -27,7 +27,7 @@ class AtomicFile extends \think\cache\driver\File
 			}
 		}
 
-		$data = "<?php\n//" . sprintf("%012d", $expire) . "\n exit();?>\n" . $data;
+		$header = "<?php\n//" . sprintf("%012d", $expire) . "\n exit();?>\n";
 		$directory = dirname($filename);
 		$this->tightenDirectoryPermissions($directory);
 		$tempFile = $this->createTemporaryFile($directory);
@@ -46,7 +46,9 @@ class AtomicFile extends \think\cache\driver\File
 
 			$writeSucceeded = false;
 			try {
-				$writeSucceeded = $this->writeAll($handle, $data) && $this->flushAndSync($handle);
+				$writeSucceeded = $this->writeAll($handle, $header)
+					&& $this->writeAll($handle, $data)
+					&& $this->flushAndSync($handle);
 			} catch (\Throwable $e) {
 				$writeSucceeded = false;
 			} finally {
@@ -90,6 +92,7 @@ class AtomicFile extends \think\cache\driver\File
 		while ($offset < $length) {
 			$chunk = substr($data, $offset, self::WRITE_CHUNK_SIZE);
 			$written = @fwrite($handle, $chunk);
+			unset($chunk);
 			if ($written === false || $written === 0) {
 				return false;
 			}
