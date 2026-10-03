@@ -10,7 +10,8 @@
 | 客户中心 | `/clientarea`、`/details`、`/security`、`/verified` | `clientarea/{theme}/*.tpl` | 客户 |
 | 服务管理 | `/service`、`/servicedetail`、`/host/*`、`/provision/*` | `service*.tpl`、`servicedetail.tpl` | 客户且校验主机归属 |
 | 购物车 | `/cart`、`/store/:alias`、`/buy/:alias` | `cart/{theme}/*.tpl` | 公开/客户按操作区分 |
-| 财务 | `/billing`、`/viewbilling`、`/invoicelist`、`/credit*` | 账单、充值和交易模板 | 客户 |
+| 财务 | `/billing`、`/viewbilling`、`/credit*` | 账单、充值、交易和信用额模板 | 客户 |
+| 发票 | `/invoicelist`（列表/申请/开具/详情分支）、`/invoicecompany`、`/invoiceaddress` | `invoicelist.tpl`、`invoicecompany.tpl`、`invoiceaddress.tpl`；见[财务页面](05-finance-pages.md#发票申请列表与详情) | 客户 |
 | 工单 | `/supporttickets`、`/submitticket`、`/viewticket`、`/ticket/*` | 工单模板 | 客户且校验工单归属 |
 | 内容 | `/news*`、`/knowledgebase*`、`/downloads` | 内容模板 | 多数公开 |
 | 后台 | 配置 `admin_application` 下的 `/index`、`/clients`、`/orders`、`/invoices` 等 | `public/admin/` 编译资源 | 管理员和功能权限 |

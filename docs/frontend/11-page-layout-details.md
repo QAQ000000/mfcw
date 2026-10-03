@@ -68,12 +68,17 @@
 | `service_product.tpl`、`service_hosting.tpl`、`service_server.tpl` | 顶部统一服务摘要；中部使用资源信息卡和凭据/网络信息分组；底部放续费、升级、工单入口，危险控制操作与普通操作分区。 |
 | `service_cloud.tpl`、`service_cloud_server.tpl` | 顶部状态和电源操作；中部资源用量图表与实例信息左右布局；下部为重装、救援、VNC/KVM 等异步任务区。 |
 | `service_cdn.tpl`、`service_domain.tpl`、`service_sms.tpl`、`service_soft.tpl`、`service_ssl.tpl` | 顶部对象摘要；中部按产品类型显示流量、域名、用量、授权或证书信息；右侧/底部放续费、配置、下载和验证操作。 |
-| `billing.tpl`、`invoicelist.tpl`、`transaction.tpl`、`creditdetail.tpl` | 标题下为筛选/批量操作，主区列表显示状态、金额、时间和详情入口；移动端每条记录变为上下排列的信息卡。 |
+| `billing.tpl`、`transaction.tpl` | 标题下为筛选/对应操作，主区列表显示状态、金额、时间和详情入口；移动端每条记录变为上下排列的信息卡。 |
+| `invoicelist.tpl` 默认列表 | 顶部申请入口；申请时间、抬头、开票总额、申请状态、邮寄地址、快递、查看/待支付操作构成表格；底部分页。手机逐条按状态摘要、抬头金额、邮寄信息、操作排列。 |
+| `invoicelist.tpl?action=invoiceapply` | 搜索后为可开票已付账单勾选表，列为账单号、金额、类型、支付时间和单笔开具；表下批量开具/分页，空选禁用。不是未付账单支付列表。 |
+| `invoicelist.tpl?action=invoiceapply&type=issue` | 个人/公司切换在首行，抬头和快递左右排列，地址整行；下部项目/金额/税率/税额表，底部税费、邮费、返回与确认；手机表单单列。 |
+| `invoicelist.tpl?action=check` | 顶部性质、抬头、快递、邮寄地址；下部开票项目与税额表及税费/邮费摘要；新模板增加返回、状态/备注，手机信息单列。详细字段和状态见[财务页面](05-finance-pages.md#发票申请列表与详情)。 |
 | `viewbilling.tpl` | 顶部账单编号、状态和应付金额；中部为项目明细和客户信息；右侧或底部为支付方式和支付按钮，支付结果显示在按钮附近。 |
 | `addfunds.tpl`、`combinebilling.tpl`、`mulitrenew.tpl` | 左侧/上方选择金额、账单或服务，右侧/下方实时汇总优惠、税费和应付金额；提交按钮与金额摘要绑定。 |
 | `credit.tpl` | 顶部为总信用额度、已用/剩余额度和使用比例；中部为账单生成日、还款期限/日期；下部为还款账单、已用明细和预还款入口。它不是预存余额页。 |
 | `creditdetail.tpl` | `action=used` 显示信用额使用明细；其他分支显示信用额还款账单、项目和支付区。移动端按摘要、项目、支付操作排列。 |
-| `invoiceapply.tpl`、`invoicecompany.tpl`、`invoiceaddress.tpl` | 顶部说明，主区为分组表单；已有地址/抬头用选择卡，编辑表单在下方或抽屉中展开。 |
+| `invoicecompany.tpl`、`invoiceaddress.tpl` | 抬头/收货地址管理列表与新增/编辑表单；抬头按个人/公司显示税号及银行等字段，地址按收件人、电话、省市区、详细地址、邮编、默认标记分组。选择控件用于开具确认分支，不与管理页混为一页。 |
+| `invoiceapply.tpl` | 文件存在，但 `/invoicelist` 的申请流程由上述 `invoicelist.tpl` 分支渲染；不据文件名新增独立页面入口。 |
 | `contract.tpl` | 标题和状态筛选后为合同列表；每行显示产品范围、签署状态和操作，详情/签署进入独立页面。 |
 | `contracthost.tpl` | 顶部合同和服务摘要；中部显示合同正文/服务信息；底部为签署、下载、取消等操作。 |
 | `supporttickets.tpl` | 顶部新建工单按钮和状态筛选；主区工单列表突出未读、状态、标题和更新时间；移动端用卡片。 |

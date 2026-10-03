@@ -120,12 +120,33 @@
 | 加入购物车 | POST `/cart/add_to_shop` | pid,billingcycle,serverid,configoption{},customfield{},currencyid,qty,os[],checkout（0/1）等 | 406 格式、400 库存/数量/绑定手机等，分支成功后重查 get_shop_data；校验数组有 currecncyid 历史拼写，实际取 currencyid |
 | 修改数量 | POST `/cart/modify_product_qty` | i 是购物车位置，qty,pos[] | 200 后 data 是购物车摘要；错误分支可能沿 Shop 返回字符串 status，需专门适配，不只判断 HTTP 200 |
 | 优惠/删除 | POST `/cart/add_promo`、`remove_promo`、`remove_product` | 优惠 promo,currency,pos[]；删除 i 或 i[] | 优惠返回 data.promo/total_price/total_desc 的局部摘要；删除 409 锁冲突；操作后重新查询全购物车，不用局部响应覆盖完整列表 |
-| 结算 | POST `/cart/settle` | payment,checkout,use_credit,pos 等；以 settle 实现为准 | 锁冲突 409，库存/数量等 400/406；订单/支付/开通分别确认 |
+| 结算 | POST `/cart/settle` | payment,checkout,use_credit,pos[]；购物车 UI 只允许非空且与最新快照逐项对应的集合 | 当前省略/空/全部无效 pos 会使用整车，混合有效/无效会取有效项；UI 必须拦截空选及任何失效/错位项，删除/刷新后重新核对位置及所选摘要，不用 cart_data 绕过。锁冲突 409，库存/数量等 400/406；不是空选拒绝契约；见[样板限制](24-first-batch-page-specs.md#f03-购物车与结算) |
 | 账单详情 | GET `/get_invoices_detail` | id；data.payee,detail,invoice_items,currency,accounts | 不存在/非本人 400；支付后按 id 重查 |
 | 支付 | POST `/start_pay` | invoiceid,payment,flag；data 为网关分支结果 | 跳转不等于成功；apply_credit 与 apply_credit_limit 不同 |
 | 服务详情 | GET/POST `/servicedetail` | ViewClients 调用 Host、Upgrade、User；Route::controller(host) 未展开 | 保留模板 action 流程，不造未确认 API |
 | 工单详情 | GET `/ticket/detail` | tid 是对外工单编号；访客例外需 nologin_send_ticket 与 c；data.list,ticket,evaluate,feedback_request | 读取清 client_unread，不用后台内部 id 替代 tid |
 | 工单回复/关闭 | POST `/ticket/reply`、`/ticket/close` | tid；回复带 content,attachment[]，访客分支 c | 重查详情，失败保留正文和附件 |
+
+## 前台发票接口
+
+依据：[home.php controller 路由](../../data/route/home.php#L250)、[VoucherController](../../app/home/controller/VoucherController.php)、[页面控制器](../../app/home/controller/ViewClientsController.php#L1212)、[校验器](../../app/home/validate/VoucherValidate.php)。下表列 controller 路由对应的请求，尚未运行验证；不能把 `voucher.id`、源账单 ID、税费/邮费付款账单 `invoice_id` 混用。页面分支与排版见[财务页面](05-finance-pages.md#发票申请列表与详情)。
+
+| 请求/用途 | 参数及真实返回 | 成功、失败和刷新 |
+| --- | --- | --- |
+| GET `/voucher/voucherlist`，申请记录列表 | page,limit,order,sort；`data.voucher[]/total`；行含 id,invoice_id,create_time,title,issue_type/issue_type_zh,amount,status/status_zh,province,city,region,detail,name,notes,invoices_subtotal | 查询限制当前 uid；开票总额取 invoices_subtotal，amount 是费用账单 subtotal；查看用 id，支付用 invoice_id；支付后重查列表 |
+| GET `/voucher/voucherrequest`，可申请账单 | keywords,page,limit,order,sort；`data.invoices[]/total`，行含 id,subtotal,type/type_zh,paid_time | 当前客户未删除的 Paid 账单，排除 recharge/combine/voucher，排除已有非 Reject 申请的账单；keywords 实际匹配 id；空候选或空选不进入开具确认 |
+| GET `/voucher/issuevoucher`，开具确认读取 | invoice_ids[]（也兼容单值）；`data.type,express[],post[],title,invoices[],voucher_amount`；title 按 person/company 分组；express 含 id,name,price，post 含 id,province,city,region,default；invoices 含 id,subtotal,taxed,taxed_amount,type,items[].description | 读取当前客户抬头/地址与源账单；voucher_amount 是税费，不是开票总额。此 post 选项没有详细地址、收件人/电话，需要展示时从地址管理接口读取，不能虚构返回字段 |
+| POST `/voucher/issuevoucher`，提交申请 | type_id（抬头记录 ID）,post_id,express_id,invoice_ids[]；旧模板另传 type，但后端由所选抬头确定性质 | 200 返回 data.invoice_id（税费/邮费付款账单），跳 viewbilling；1001 零费用分支不含该字段，重查申请；400 抬头/地址/快递错误或写入异常，保留输入；超时先核对，禁止自动重试或无条件读取 data.invoice_id |
+| GET `/voucher/voucherdetail`，申请详情 | id 为 voucher.id；`data.voucher,invoices[],voucher_amount`；voucher 含性质、抬头、状态/中文状态、地址、快递 name/price、notes；invoices 含 id,subtotal,taxed,taxed_amount,items[] | 主申请与账单查询有 uid 限制，但不存在/非本人仍可能业务 200 且 voucher 为空；显示不可用，不呈现空白成功详情；费用与项目分别展示 |
+| GET `/voucher/currency`、`/voucher/arealist` | `data.currency` 当前客户币种；`data.areas` 是 area_id,pid,name 形成的树 | 货币前后缀及地址联动按实际响应适配 |
+| GET `/voucher/voucherinfolist`、`/voucher/voucherinfo` | 列表 page,limit,order,sort，返回 data.voucher_type[]/total；详情可带 id，返回 data.issue_type,voucher_type,voucher_info；详情含 title,issue_type,voucher_type,tax_id,bank,account,address,phone | 个人/公司与普通/专用分别映射；详情无 id 为新增元数据；缺记录 400；现有详情按 id 查，未按 uid 限制，不能宣称已有完整归属校验 |
+| POST/DELETE `/voucher/voucherinfo` | POST 可选编辑 id；issue_type,title；公司另有 voucher_type,tax_id,bank,account,address,phone；DELETE 带 id | 个人必填抬头，公司另必填发票类型/税号，其他长度规则见校验器；200 后重查，400 留输入；已被申请使用的抬头不可删除；编辑查询/更新未限定原记录 uid，不能以 UI 白名单代替权限保护 |
+| GET `/voucher/voucherpostlist`、`/voucher/voucherpost` | 列表 page,limit,order,sort，data.voucher_post[]/total；详情可选 id，data.voucher_post；字段 id,username,phone,province,city,region,detail,post,default | 按当前 uid 查询；默认地址优先；详情缺记录 400 |
+| POST/DELETE `/voucher/voucherpost`、POST `/voucher/voucherdefaultpost` | 地址 POST 可选 id，username,phone,province,city,region,detail,post,default；默认操作 id,default；DELETE id | 必填收件人、省市区、详细地址和 default，phone/post 在当前校验器仅限制长度；200 后重查地址及默认项；400 留输入，使用中地址不可删；默认操作要求至少保留一个默认地址 |
+
+**现状与实施要求：** 候选读取仅给出符合条件的账单，但 `postIssueVoucher` 的金额汇总按 invoice_ids 查，未重新限定 uid、Paid/未删除、已申请排除，也未见重复申请幂等保护；事务不等于这些规则已校验。新模板仅提交本次候选集合并禁用重复确认，失败/超时先查询，但服务端账单资格、归属和抬头编辑缺口仍需单独修复与隔离环境验收，不能据这些文档放行真实开票写入。
+
+状态枚举及付款/审核关系见[财务页面](05-finance-pages.md#发票申请列表与详情)，验收 I01–I03 当前为 NOT RUN。
 
 ## 设置页的隐式接口
 
