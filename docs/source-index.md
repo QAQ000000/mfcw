@@ -16,8 +16,19 @@
 
 | 文档 | 路由或入口 | 核心实现 | 扩展与示例 |
 | --- | --- | --- | --- |
+| [产品与业务模型](product.md) | 客户中心、购物车、订单和主机业务入口 | `app/common/logic/`、`app/home/controller/`、`app/openapi/controller/`、`app/admin/controller/` | `app/config/public.php`、`docs/` 各领域契约 |
 | [系统架构](01-architecture.md) | `public/index.php`、`data/route/` | `app/app.php`、`app/config/`、`app/common/logic/`、`app/queue/` | `public/plugins/`、`public/themes/`、`public/upgrade/` |
+| [数据库说明](database.md) | 安装库和版本升级入口 | `public/install/thinkcmf.sql`、`public/upgrade/*.sql`、模型与迁移调用方 | `tests/*database*`、隔离 MySQL/MariaDB 测试库 |
 | [API](02-api.md) | `data/route/openapi.php`、`api.php`、`home.php`、`admin.php` | `app/http/middleware/`、`app/openapi/controller/`、`app/api/controller/`、`app/zjmf.php` | `app/openapi/documents/`、`docs/scripts/generate-openapi-route-reference.php` |
+| [前端页面与主题](frontend.md) | `data/route/home.php`、`data/route/admin.php` | `app/home/controller/View*.php`、`app/home/controller/CartController.php`、`app/admin/controller/View*.php`、后台业务控制器 | `public/themes/`、`public/admin/`、`docs/frontend/13-page-api-contract.md`、`docs/frontend/16-frontend-architecture-build.md` |
+| [后台静态盘点](frontend/22-admin-route-inventory.md) | 编译 Vue Router、PHP View*、controller 约定路由 | `public/admin/js/app~*.js`、`vendor/thinkphp/library/think/Route.php`、`data/route/admin.php`、`home.php` | `docs/scripts/generate-admin-page-inventory.cjs`；动态菜单/运行时优先级另验 |
+| [重构首批与开工状态](frontend/25-rewrite-readiness.md) | 核心接口、权限、状态与主题切换 | CreditLimit、Reports、UserManage、Invoice、Ticket、Host、ConfigGeneral | [首批文字线框](frontend/24-first-batch-page-specs.md)、[隔离用例](frontend/18-frontend-test-acceptance.md)；尚无业务运行验收通过证据 |
+| [后台实施样板](frontend/26-admin-pilot-contract.md) | login/login_page/second_verify_send/client_list/profile/profile_post/common | Public、UserManage、UserManageValidate、Common、AdminBase/GetUser | 资料字段/序列化及部分保存行为；副本 PHP/数据库只读预检、源码与环境阻塞项 |
+| [旧后台逐页证据](frontend/27-admin-built-page-evidence.md) | Vue Router factory、Webpack 模块/导出、Vue render 与 CSS | `public/admin/js/`、`public/admin/css/`、`public/admin/lang/zh.js` | `docs/scripts/generate-admin-build-evidence.cjs`；[人工解读](frontend/28-admin-built-layout-reading.md)；静态提取不代替浏览器 |
+| [旧后台浏览器观察](frontend/29-admin-browser-observations.md) | 副本 /admin123/ hash 页面与 login/client_list/profile 等实际请求 | WSL/Linux Chrome、Playwright CLI；旧部署编译资源与后台 PHP 接口 | 登录/读取/导航、布局实测与脱敏截图；没有客户写入或新工程验收 |
+| [后台逐页设计契约](frontend/30-admin-page-contract-index.md) | 229条编译路由，按7个模块分别记录 | `docs/scripts/admin-page-designs.cjs`、`generate-admin-page-contracts.cjs`，复用已有AST及PHP路由盘点 | 新桌面/手机布局、旧控件条件和请求归属；schema/普通角色/全量运行尚未冻结 |
+| [前台匿名页面实测](frontend/38-front-browser-observations.md) | 副本 /、login/register/pwreset/cart，匿名客户入口跳转 | WSL/Linux Chrome、实际加载的web/zjmf与clientarea/cart default资源 | 公开页面排版与缺图/字体问题；未登录客户中心或执行业务提交 |
+| [部署与运行手册](deployment.md) | `public/index.php`、`app/command.php`、队列服务入口 | `app/admin/command/`、`bin/`、`deploy/queue/`、`app/config/queue.php` | PHP-FPM、Web Server、Cron 和实例部署配置 |
 | [主题](03-themes.md) | `data/route/home.php` | `app/home/controller/ViewBaseController.php`、`ViewClientsController.php`、`ViewCartController.php` | `public/themes/web/`、`clientarea/`、`cart/` |
 | [插件](04-plugins.md) | `data/route/admin.php`、`home.php` | `app/admin/controller/PluginController.php`、`PluginBaseController.php`、`app/admin/lib/Plugin.php` | `public/plugins/addons/demo_style/` |
 | [Hook](05-hooks.md) | 应用启动时加载已启用监听器 | `app/home/controller/HooksController.php`、全仓 `hook(...)` 调用点 | Addon 主类方法及 `public/plugins/addons/*/hooks.php` |
@@ -47,10 +58,12 @@
 
 ## 4. 发布前覆盖审计
 
-1. 运行 `php docs/scripts/generate-openapi-route-reference.php`，确认生成结果无意外差异。
-2. 运行 `php think route:list`，核对嵌套分组后的真实路径，特别是 `/api/api/host*`。
+1. 使用站点实际 PHP 二进制（例如 `APP_PHP=/www/server/php/72/bin/php`）运行
+   `"$APP_PHP" docs/scripts/generate-openapi-route-reference.php`，确认生成结果无意外差异。
+2. 使用同一个二进制运行 `"$APP_PHP" think route:list`，核对嵌套分组后的真实路径，
+   特别是 `/api/api/host*`；不要用系统默认 `php` 代替。
 3. 对文档提及的控制器、方法、插件类和模板执行路径存在性检查。
 4. 检查新增或删除的 `data/route/*.php` 路由是否已同步到 API 文档。
 5. 检查 `public/plugins/` 及部署时可能存在的 `modules/` 是否改变了插件契约。
-6. 对变更 PHP 文件运行 `php -l`，再执行与队列、支付、工单和模块生命周期相关的回归。
-7. 检查文档链接、尾随空白和生成器幂等性，然后随源码在同一提交发布。
+6. 对变更 PHP 文件运行 `"$APP_PHP" -l`，再执行与队列、支付、工单和模块生命周期相关的回归。
+7. 用 `node docs/scripts/check-doc-links.cjs` 检查本文档的本地路径/源行和空白；按盘点文档运行生成器 --check 验证幂等性。运行时 URL 和命名标题锚点另验，再随源码在同一提交发布。

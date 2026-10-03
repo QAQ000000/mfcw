@@ -9,6 +9,12 @@
 - 客户认证：HS256 JWT，同时要求缓存中存在
   `client_user_login_token_<JWT>` 会话映射。
 
+命令行 PHP 必须与站点 PHP-FPM、队列 worker 使用同一个实际二进制。系统中的 `php`
+命令可能指向另一版本，只能用于查看环境，不能作为应用运行时依据。验证或执行命令前
+先设置例如 `APP_PHP=/www/server/php/72/bin/php`，再使用 `"$APP_PHP" think ...`。
+ThinkPHP 5.1 在较新的 PHP 版本上可能因框架弃用 API 被错误处理器中止；这属于运行时
+选择问题，不应通过切换系统默认 PHP 来替代站点配置。
+
 根目录没有用于重新解析依赖的 `composer.json`/`composer.lock`。不要在生产实例中
 直接运行 `composer update`；现有 `vendor/` 应视作发布包的一部分。
 
@@ -79,7 +85,7 @@ JWT 按 `zjmf_finance_jwt_<api_id>` 缓存 5400 秒；上游返回业务状态 `
 - 插件安装、状态和序列化配置保存在 `plugin` 表。
 - 缓存不是纯性能层：JWT 会话、验证码、限流、同步状态都依赖缓存。切换缓存驱动
   前必须验证 TTL、原子增减和多进程可见性。
-- Cron 入口为 `php think cron`；登录通知等异步任务还需要独立数据库队列 worker，
+- Cron 入口为 `"$APP_PHP" think cron`；登录通知等异步任务还需要独立数据库队列 worker，
   部署见 `deploy/queue/README.md`。
 
 ## 5. 数据库与事务

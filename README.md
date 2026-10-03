@@ -6,6 +6,17 @@ v10 主机的官方 3.7.6 实例迁移，且不引入 v10 或 P3 插件功能。
 二次开发、API、主题、插件及外部集成说明见
 [开发文档](docs/README.md)。文档以当前分支源码和 `data/route/*.php` 实际路由为准。
 
+本项目的 PHP 运行时以站点 PHP-FPM 和队列服务配置的实际二进制为准，不能用当前 Shell
+中的 `php` 命令推断兼容性。执行升级、Cron、队列或路由检查前，先设置并验证实际 PHP：
+
+```sh
+APP_PHP=/www/server/php/72/bin/php
+"$APP_PHP" -v
+```
+
+下文和开发文档中的 PHP 命令都应替换为 `"$APP_PHP"`。如果站点使用其他版本或路径，
+必须以站点实际配置为准；不要直接用系统 PHP 8 CLI 运行 ThinkPHP 控制台。
+
 ## 从 3.7.6 手动升级
 
 1. 备份数据库和完整站点，暂停 Cron、队列 worker 与写请求。
@@ -19,7 +30,7 @@ v10 主机的官方 3.7.6 实例迁移，且不引入 v10 或 P3 插件功能。
    `bin/zjmf-queue-worker` 保留可执行权限，同时确认
    `bin/zjmf-queue-bootstrap.php` 已复制。保留实例自己的 `public/plugins`、
    `public/upload`、`uploads`、`downloads` 和自定义主题。
-5. 在站点根目录执行 `php public/upgrade/upgrade.php --run`。不要使用后台自动升级页
+5. 在站点根目录执行 `"$APP_PHP" public/upgrade/upgrade.php --run`。不要使用后台自动升级页
    或 Web SQL 升级入口。3.7.6 会选择幂等的 `public/upgrade/3.7.7.sql`，该迁移
    保留既有 v10 数据库字段，仅增加本分支需要的日志可见性、商品缓存状态与索引。
 6. 清理框架缓存和 schema 缓存，重启 PHP-FPM。每个实例必须有自己的数据库队列

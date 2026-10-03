@@ -146,7 +146,8 @@ JWT 默认有效期 7200 秒，但仅签名和时间有效还不够：缓存中�
 
 `ApiCheck` 分组在 `group("api")` 内又声明了以 `api/` 开头的路径。框架实际注册的
 三个 URL 是 `/api/api/host_server`、`/api/api/host`、`/api/api/host/free`，不是
-控制器注释中容易推断出的单 `/api` 路径。应以 `php think route:list` 为准。
+控制器注释中容易推断出的单 `/api` 路径。应使用站点实际 PHP 二进制执行
+`"$APP_PHP" think route:list`，不能直接使用系统 `php` 命令。
 
 当前已确认的悬空路由包括：
 

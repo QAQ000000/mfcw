@@ -1,0 +1,18 @@
+const assert = require('node:assert/strict');
+const { ownership, constantUrl, phpMatches, ruleFor, textLabel, render } = require('../docs/scripts/generate-admin-page-contracts.cjs');
+assert.equal(ownership.size, 229);
+assert.deepEqual(constantUrl('"invoice/summary/"+id'), { prefix: 'invoice/summary/', exact: false });
+assert.equal(constantUrl('dynamicUrl'), null);
+assert.equal(textLabel('t._s(t.$lang.edit)+" "'), '编辑');
+const clientList = phpMatches({ url: '"client_list"', method: '"post"' });
+assert.ok(clientList.some(route => route.target === 'admin/user_manage/clientList' && route.method === 'RULE'));
+assert.ok(clientList.some(route => ruleFor(route).endsWith('UserManagecontroller::clientlist')));
+assert.equal(phpMatches({ url: '"https://example.invalid/client_list"', method: '"post"' }).length, 0);
+assert.equal(phpMatches({ url: '"profile_post"', method: '"delete"' }).length, 0);
+const documents = render();
+assert.equal(documents.size, 8);
+assert.ok(documents.get('31-admin-customer-contracts.md').includes('密码/头像不默认提交'));
+assert.ok(documents.get('31-admin-customer-contracts.md').includes('旧页面部分已观察'));
+assert.ok(documents.get('34-admin-finance-contracts.md').includes('方法内部调用（时序另查）'));
+assert.ok(documents.get('36-admin-setting-content-contracts.md').includes('组件归属未冻结'));
+console.log('PASS page contracts: complete unique ownership, method-aware PHP matching, dynamic URL limits and draft provenance');

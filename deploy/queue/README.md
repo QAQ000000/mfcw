@@ -3,6 +3,14 @@
 登录邮件和短信通知使用数据库队列。每个魔方财务实例都必须运行自己的 worker，
 因为队列连接从该实例的 `app/config/database.php` 加载。
 
+队列 worker 必须使用与该站点 PHP-FPM 相同的 PHP 二进制。主机当前 Shell 的 `php`
+版本可以不同，不影响站点运行；安装前请先确认实际路径和版本：
+
+```sh
+APP_PHP=/www/server/php/72/bin/php
+"$APP_PHP" -v
+```
+
 ## 宝塔一键安装
 
 ```sh
@@ -32,12 +40,12 @@ cd /www/wwwroot/实例目录
 chmod 755 bin/install-queue-service bin/zjmf-queue-worker
 ```
 
-如果项目目录、PHP CLI 路径或站点用户不是示例值，应传入实际值。可用以下命令
-核对：
+如果项目目录、PHP CLI 路径或站点用户不是示例值，应传入实际值。不要用
+`command -v php` 代替站点 PHP 路径；可用以下命令核对：
 
 ```sh
 pwd
-command -v php
+"$APP_PHP" -v
 stat -c '%U:%G' .
 ```
 
